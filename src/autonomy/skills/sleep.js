@@ -74,7 +74,7 @@ const CARDINALS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
  * 放床：床占两格，放在“脚前一格”，床头会朝着面对的方向再伸出一格。
  * 所以要找一个方向，前面连续两格都是空的、下面都是实心的。放完等一下，确认两半都出现了。
  */
-async function placeBed(ctx, bedItem) {
+export async function placeBed(ctx, bedItem, { canPlace = () => true } = {}) {
   const { bot, signal } = ctx;
   const feet = bot.entity.position.floored();
   const isFree = (position) => {
@@ -85,7 +85,7 @@ async function placeBed(ctx, bedItem) {
   for (const [dx, dz] of CARDINALS) {
     const foot = feet.offset(dx, 0, dz);
     const head = feet.offset(dx * 2, 0, dz * 2);
-    if (!isFree(foot) || !isFree(head)) continue;
+    if (!canPlace(foot) || !canPlace(head) || !isFree(foot) || !isFree(head)) continue;
     await bot.equip(bedItem, 'hand');
     await bot.lookAt(head.offset(0.5, 0, 0.5), true); // 面朝床头方向
     await sleep(150, signal);

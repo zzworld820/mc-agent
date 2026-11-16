@@ -11,7 +11,7 @@ const log = createLogger('bot');
  * @param {(bot: import('mineflayer').Bot) => void} onSpawn
  * @returns {{ stop: () => void }}  调用 stop() 可主动下线、不再重连
  */
-export function startBot(mcConfig, onSpawn) {
+export function startBot(mcConfig, onSpawn, { prepareBot } = {}) {
   let currentBot = null;
   let stopped = false;
 
@@ -26,11 +26,13 @@ export function startBot(mcConfig, onSpawn) {
       version: mcConfig.version, // undefined 时 mineflayer 自动探测
     });
     currentBot = bot;
+    bot.buildingServer = `${mcConfig.host}:${mcConfig.port}`;
+    prepareBot?.(bot);
 
     // 'spawn' 在第一次进入世界和每次重生后都会触发，用 once 只挂一次能力
     bot.once('spawn', () => {
       log.info(`已进入世界（版本 ${bot.version}）`);
-      onSpawn(bot);
+      Promise.resolve().then(() => onSpawn(bot)).catch(() => log.error('进服能力初始化失败，请检查配置和本地档案；未输出连接凭证'));
     });
 
     bot.on('kicked', (reason) => log.warn('被服务器踢出：', formatReason(reason)));

@@ -80,7 +80,7 @@ export const gatheringActions = [
       },
       required: ['block'],
     },
-    run({ bot, tasks, player, isWhisper, options }, { block, count = 4 }) {
+    run({ bot, tasks, player, isWhisper, options, supplyResume }, { block, count = 4 }) {
       if (!options.allowDig) return '服务器设置了不允许我挖方块（NPC_ALLOW_DIG=false）';
 
       const names = resolveBlockNames(bot, block).filter(isDiggableKind);
@@ -90,7 +90,15 @@ export const gatheringActions = [
 
       const target = Math.max(1, Math.min(Math.round(Number(count) || 4), MAX_COUNT));
       const label = `挖 ${target} 个 ${block}`;
-      tasks.start({ label, kind: 'gather', owner: player, isWhisper, report: 'always' }, (ctx) => collect(bot, names, target, ctx));
+      const mining = names.some((name) => name.includes('ore'));
+      const requiresTool = names.some((name) => bot.registry.blocksByName[name].harvestTools);
+      const tool = requiresTool ? ['wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe', 'diamond_pickaxe']
+        .find((name) => names.every((blockName) => !bot.registry.blocksByName[blockName].harvestTools
+          || bot.registry.blocksByName[blockName].harvestTools[bot.registry.itemsByName[name]?.id])) : null;
+      tasks.start({ label, kind: 'gather', owner: player, isWhisper, report: 'always',
+        supply: { profile: mining ? 'mining' : 'local', needsLight: mining, tool, resumePosition: supplyResume,
+          descriptor: { action: 'collect_block', args: { block, count: target } } },
+      }, (ctx) => collect(bot, names, target, ctx));
       return `已开始：${label}`;
     },
   },
@@ -120,10 +128,11 @@ export const gatheringActions = [
 ];
 
 /** 挖方块的主循环：找最近的 → 走过去 → 换工具 → 挖 → 捡掉落物，直到够数 */
-async function collect(bot, names, target, { signal, setProgress }) {
+async function collect(bot, names, target, { signal, setProgress, checkpoint = {}, saveCheckpoint }) {
   const ids = names.map((name) => bot.registry.blocksByName[name].id);
-  const before = inventorySnapshot(bot);
-  let dug = 0;
+  checkpoint.before ??= inventorySnapshot(bot);
+  const before = checkpoint.before;
+  let dug = checkpoint.dug || 0;
   let failures = 0;
 
   setProgress(`0/${target}`);
@@ -142,6 +151,9 @@ async function collect(bot, names, target, { signal, setProgress }) {
     try {
       await digOne(bot, block, signal);
       dug += 1;
+      checkpoint.dug = dug;
+      await saveCheckpoint?.();
+      throwIfAborted(signal);
       failures = 0;
       setProgress(`${dug}/${target}`);
       await pickUpDrops(bot, block.position, PICKUP_RADIUS, signal);
@@ -249,7 +261,6 @@ async function digOne(bot, block, signal) {
   } finally {
     signal.removeEventListener('abort', onAbort);
   }
-  throwIfAborted(signal);
 }
 
 /** 走过去把某个位置附近的掉落物捡起来 */

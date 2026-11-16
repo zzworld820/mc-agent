@@ -1,0 +1,592 @@
+TAP version 13
+# Subtest: MEM-01 identity persists across concurrent initialization
+ok 1 - MEM-01 identity persists across concurrent initialization
+  ---
+  duration_ms: 9.911493
+  type: 'test'
+  ...
+# Subtest: MEM-02 explicit world identity is retained
+ok 2 - MEM-02 explicit world identity is retained
+  ---
+  duration_ms: 0.252731
+  type: 'test'
+  ...
+# Subtest: MEM-03 own home is remembered without claiming respawn confirmed
+ok 3 - MEM-03 own home is remembered without claiming respawn confirmed
+  ---
+  duration_ms: 8.366642
+  type: 'test'
+  ...
+# Subtest: MEM-04 private memories hidden from other agents
+ok 4 - MEM-04 private memories hidden from other agents
+  ---
+  duration_ms: 2.484213
+  type: 'test'
+  ...
+# Subtest: MEM-05 team sharing is scoped to that team
+ok 5 - MEM-05 team sharing is scoped to that team
+  ---
+  duration_ms: 3.244531
+  type: 'test'
+  ...
+# Subtest: MEM-06 worlds do not share spatial memories
+ok 6 - MEM-06 worlds do not share spatial memories
+  ---
+  duration_ms: 2.903675
+  type: 'test'
+  ...
+# Subtest: MEM-07 dimensions remain separated
+ok 7 - MEM-07 dimensions remain separated
+  ---
+  duration_ms: 1.602448
+  type: 'test'
+  ...
+# Subtest: MEM-08 rollback epoch marks prior observations stale
+ok 8 - MEM-08 rollback epoch marks prior observations stale
+  ---
+  duration_ms: 1.526697
+  type: 'test'
+  ...
+# Subtest: MEM-09 pets use persistent UUID not transient entity id
+ok 9 - MEM-09 pets use persistent UUID not transient entity id
+  ---
+  duration_ms: 1.18505
+  type: 'test'
+  ...
+# Subtest: MEM-10 placed asset records builder without inferring ownership
+ok 10 - MEM-10 placed asset records builder without inferring ownership
+  ---
+  duration_ms: 1.379853
+  type: 'test'
+  ...
+# Subtest: MEM-11 container change is observed, not attributed to a person
+ok 11 - MEM-11 container change is observed, not attributed to a person
+  ---
+  duration_ms: 1.685092
+  type: 'test'
+  ...
+# Subtest: MEM-12 verified own transfer is distinct from unexplained changes
+ok 12 - MEM-12 verified own transfer is distinct from unexplained changes
+  ---
+  duration_ms: 1.435858
+  type: 'test'
+  ...
+# Subtest: MEM-13 exploration is a sample, not a whole explored chunk
+ok 13 - MEM-13 exploration is a sample, not a whole explored chunk
+  ---
+  duration_ms: 1.09359
+  type: 'test'
+  ...
+# Subtest: MEM-14 literal search escapes regex metacharacters
+ok 14 - MEM-14 literal search escapes regex metacharacters
+  ---
+  duration_ms: 1.263947
+  type: 'test'
+  ...
+# Subtest: MEM-15 published knowledge versions cannot silently overwrite
+ok 15 - MEM-15 published knowledge versions cannot silently overwrite
+  ---
+  duration_ms: 1.482856
+  type: 'test'
+  ...
+# Subtest: MEM-16 malformed coordinates are rejected
+ok 16 - MEM-16 malformed coordinates are rejected
+  ---
+  duration_ms: 0.801796
+  type: 'test'
+  ...
+# Subtest: SUP-01 full hunger but no carried food requests supplies
+ok 17 - SUP-01 full hunger but no carried food requests supplies
+  ---
+  duration_ms: 1.692296
+  type: 'test'
+  ...
+# Subtest: SUP-02 normal carried food is measured in points
+ok 18 - SUP-02 normal carried food is measured in points
+  ---
+  duration_ms: 1.24414
+  type: 'test'
+  ...
+# Subtest: SUP-03 rotten flesh is not expedition food
+ok 19 - SUP-03 rotten flesh is not expedition food
+  ---
+  duration_ms: 0.644201
+  type: 'test'
+  ...
+# Subtest: SUP-04 emergency allows rotten flesh
+ok 20 - SUP-04 emergency allows rotten flesh
+  ---
+  duration_ms: 0.21958
+  type: 'test'
+  ...
+# Subtest: SUP-05 normal hunger does not use rotten flesh
+ok 21 - SUP-05 normal hunger does not use rotten flesh
+  ---
+  duration_ms: 0.272438
+  type: 'test'
+  ...
+# Subtest: SUP-06 harmful foods are rejected even in emergency
+ok 22 - SUP-06 harmful foods are rejected even in emergency
+  ---
+  duration_ms: 0.752113
+  type: 'test'
+  ...
+# Subtest: SUP-07 propagules reserved normally
+ok 23 - SUP-07 propagules reserved normally
+  ---
+  duration_ms: 0.278079
+  type: 'test'
+  ...
+# Subtest: SUP-08 propagules available in emergency
+ok 24 - SUP-08 propagules available in emergency
+  ---
+  duration_ms: 0.121788
+  type: 'test'
+  ...
+# Subtest: SUP-09 hunger interrupts active work
+ok 25 - SUP-09 hunger interrupts active work
+  ---
+  duration_ms: 0.352447
+  type: 'test'
+  ...
+# Subtest: SUP-10 eating at hunger 18 is not required when healthy
+ok 26 - SUP-10 eating at hunger 18 is not required when healthy
+  ---
+  duration_ms: 0.40792
+  type: 'test'
+  ...
+# Subtest: SUP-11 injured agent eats to recover
+ok 27 - SUP-11 injured agent eats to recover
+  ---
+  duration_ms: 0.240749
+  type: 'test'
+  ...
+# Subtest: SUP-12 mining requires light and tool
+ok 28 - SUP-12 mining requires light and tool
+  ---
+  duration_ms: 0.263291
+  type: 'test'
+  ...
+# Subtest: SUP-13 high risk requires weapon and armor
+ok 29 - SUP-13 high risk requires weapon and armor
+  ---
+  duration_ms: 0.13967
+  type: 'test'
+  ...
+# Subtest: SUP-14 expedition budget exceeds local budget
+ok 30 - SUP-14 expedition budget exceeds local budget
+  ---
+  duration_ms: 0.136545
+  type: 'test'
+  ...
+# Subtest: SUP-15 food reserves are shared across food types
+ok 31 - SUP-15 food reserves are shared across food types
+  ---
+  duration_ms: 0.263982
+  type: 'test'
+  ...
+# Subtest: SUP-16 stale warehouse is not carried food
+ok 32 - SUP-16 stale warehouse is not carried food
+  ---
+  duration_ms: 0.455269
+  type: 'test'
+  ...
+# Subtest: SUP-17 configuration rejects inverted thresholds
+ok 33 - SUP-17 configuration rejects inverted thresholds
+  ---
+  duration_ms: 0.284731
+  type: 'test'
+  ...
+# Subtest: FARM-01 configurable small and large dimensions
+ok 34 - FARM-01 configurable small and large dimensions
+  ---
+  duration_ms: 0.185256
+  type: 'test'
+  ...
+# Subtest: FARM-02 shrinking maximum is rejected
+ok 35 - FARM-02 shrinking maximum is rejected
+  ---
+  duration_ms: 0.100107
+  type: 'test'
+  ...
+# Subtest: FARM-age-wheat
+ok 36 - FARM-age-wheat
+  ---
+  duration_ms: 0.405506
+  type: 'test'
+  ...
+# Subtest: FARM-age-potatoes
+ok 37 - FARM-age-potatoes
+  ---
+  duration_ms: 0.101279
+  type: 'test'
+  ...
+# Subtest: FARM-age-beetroots
+ok 38 - FARM-age-beetroots
+  ---
+  duration_ms: 0.097693
+  type: 'test'
+  ...
+# Subtest: FARM-age-carrots
+ok 39 - FARM-age-carrots
+  ---
+  duration_ms: 0.081922
+  type: 'test'
+  ...
+# Subtest: FARM-03 unloaded crops remain unknown
+ok 40 - FARM-03 unloaded crops remain unknown
+  ---
+  duration_ms: 0.207176
+  type: 'test'
+  ...
+# Subtest: BUILD-01 builtin models and all expansion directions validate
+ok 41 - BUILD-01 builtin models and all expansion directions validate
+  ---
+  duration_ms: 16.485303
+  type: 'test'
+  ...
+# Subtest: BUILD-02 derived model remains draft with lineage
+ok 42 - BUILD-02 derived model remains draft with lineage
+  ---
+  duration_ms: 0.924584
+  type: 'test'
+  ...
+# Subtest: BUILD-03 material counts use the actual blueprint
+ok 43 - BUILD-03 material counts use the actual blueprint
+  ---
+  duration_ms: 1.437361
+  type: 'test'
+  ...
+# Subtest: BUILD-foundation-lava
+ok 44 - BUILD-foundation-lava
+  ---
+  duration_ms: 0.939192
+  type: 'test'
+  ...
+# Subtest: BUILD-foundation-water
+ok 45 - BUILD-foundation-water
+  ---
+  duration_ms: 0.687602
+  type: 'test'
+  ...
+# Subtest: BUILD-foundation-air
+ok 46 - BUILD-foundation-air
+  ---
+  duration_ms: 0.581915
+  type: 'test'
+  ...
+# [21:20:32] [task] 开始任务 \#1：first
+# Subtest: BUILD-04 complete dry supported site is accepted
+ok 47 - BUILD-04 complete dry supported site is accepted
+  ---
+  duration_ms: 1.143382
+  type: 'test'
+  ...
+# [21:20:32] [task] 开始任务 \#2：second
+# [21:20:32] [task] 任务 \#1 已取消：完成了
+# [21:20:32] [task] 任务 \#2 完成：2
+# Subtest: TASK-01 old task exits before new task starts
+ok 48 - TASK-01 old task exits before new task starts
+  ---
+  duration_ms: 35.963786
+  type: 'test'
+  ...
+# Subtest: SUP-18 emergency policy can explicitly disable rotten flesh
+ok 49 - SUP-18 emergency policy can explicitly disable rotten flesh
+  ---
+  duration_ms: 0.215862
+  type: 'test'
+  ...
+# Subtest: SUP-19 duplicate double-chest snapshots not counted twice
+ok 50 - SUP-19 duplicate double-chest snapshots not counted twice
+  ---
+  duration_ms: 0.19827
+  type: 'test'
+  ...
+# Subtest: SUP-20 other dimension containers ignored
+ok 51 - SUP-20 other dimension containers ignored
+  ---
+  duration_ms: 0.106408
+  type: 'test'
+  ...
+# Subtest: FARM-04 90 percent maturity computed against planted crops
+ok 52 - FARM-04 90 percent maturity computed against planted crops
+  ---
+  duration_ms: 0.324816
+  type: 'test'
+  ...
+# Subtest: FARM-05 missing soil reported as damaged
+ok 53 - FARM-05 missing soil reported as damaged
+  ---
+  duration_ms: 0.129272
+  type: 'test'
+  ...
+# Subtest: BUILD-05 unrelated occupied structures rejected
+ok 54 - BUILD-05 unrelated occupied structures rejected
+  ---
+  duration_ms: 2.087633
+  type: 'test'
+  ...
+# Subtest: BUILD-06 model characteristics required
+ok 55 - BUILD-06 model characteristics required
+  ---
+  duration_ms: 0.871335
+  type: 'test'
+  ...
+# [21:20:32] [task] 开始任务 \#1：queued
+# [21:20:32] [task] 任务 \#1 已取消：任务在开始前已取消
+# Subtest: BUILD-07 vertical model footprint must match
+ok 56 - BUILD-07 vertical model footprint must match
+  ---
+  duration_ms: 3.089611
+  type: 'test'
+  ...
+# Subtest: TASK-02 cancellation before queued task prevents work
+ok 57 - TASK-02 cancellation before queued task prevents work
+  ---
+  duration_ms: 0.938119
+  type: 'test'
+  ...
+# Subtest: BUILD-08 basement accepts air outside the existing ground floor
+ok 58 - BUILD-08 basement accepts air outside the existing ground floor
+  ---
+  duration_ms: 2.737876
+  type: 'test'
+  ...
+# Subtest: BUILD-09 basement rejects true underground void
+ok 59 - BUILD-09 basement rejects true underground void
+  ---
+  duration_ms: 0.766029
+  type: 'test'
+  ...
+# Subtest: BUILD-10 basement rejects nearby lava
+ok 60 - BUILD-10 basement rejects nearby lava
+  ---
+  duration_ms: 0.750359
+  type: 'test'
+  ...
+# Subtest: DANGER-01 healthy safe terrain does not retreat
+ok 61 - DANGER-01 healthy safe terrain does not retreat
+  ---
+  duration_ms: 1.657822
+  type: 'test'
+  ...
+# Subtest: DANGER-02 unarmored agent avoids approaching hostile
+ok 62 - DANGER-02 unarmored agent avoids approaching hostile
+  ---
+  duration_ms: 0.454097
+  type: 'test'
+  ...
+# Subtest: DANGER-03 nearby passive animal is not a hostile
+ok 63 - DANGER-03 nearby passive animal is not a hostile
+  ---
+  duration_ms: 0.186798
+  type: 'test'
+  ...
+# Subtest: DANGER-04 lava forces retreat
+ok 64 - DANGER-04 lava forces retreat
+  ---
+  duration_ms: 0.220131
+  type: 'test'
+  ...
+# Subtest: DANGER-05 own oxygen drives escape from water
+ok 65 - DANGER-05 own oxygen drives escape from water
+  ---
+  duration_ms: 0.140462
+  type: 'test'
+  ...
+# Subtest: DANGER-06 incoming projectile is recognized
+ok 66 - DANGER-06 incoming projectile is recognized
+  ---
+  duration_ms: 0.189433
+  type: 'test'
+  ...
+# Subtest: SENSE-house-evidence
+ok 67 - SENSE-house-evidence
+  ---
+  duration_ms: 3.497452
+  type: 'test'
+  ...
+# Subtest: SENSE-house-single-block
+ok 68 - SENSE-house-single-block
+  ---
+  duration_ms: 0.517164
+  type: 'test'
+  ...
+# Subtest: SENSE-village-evidence
+ok 69 - SENSE-village-evidence
+  ---
+  duration_ms: 1.00237
+  type: 'test'
+  ...
+# Subtest: SENSE-village-single-block
+ok 70 - SENSE-village-single-block
+  ---
+  duration_ms: 0.456601
+  type: 'test'
+  ...
+# Subtest: SENSE-nether_fortress-evidence
+ok 71 - SENSE-nether_fortress-evidence
+  ---
+  duration_ms: 0.534346
+  type: 'test'
+  ...
+# Subtest: SENSE-nether_fortress-single-block
+ok 72 - SENSE-nether_fortress-single-block
+  ---
+  duration_ms: 0.291574
+  type: 'test'
+  ...
+# Subtest: SENSE-bastion_remnant-evidence
+ok 73 - SENSE-bastion_remnant-evidence
+  ---
+  duration_ms: 0.518066
+  type: 'test'
+  ...
+# Subtest: SENSE-bastion_remnant-single-block
+ok 74 - SENSE-bastion_remnant-single-block
+  ---
+  duration_ms: 0.290362
+  type: 'test'
+  ...
+# Subtest: SENSE-stronghold-evidence
+ok 75 - SENSE-stronghold-evidence
+  ---
+  duration_ms: 0.608785
+  type: 'test'
+  ...
+# Subtest: SENSE-stronghold-single-block
+ok 76 - SENSE-stronghold-single-block
+  ---
+  duration_ms: 0.479164
+  type: 'test'
+  ...
+# Subtest: SENSE-desert_pyramid-evidence
+ok 77 - SENSE-desert_pyramid-evidence
+  ---
+  duration_ms: 0.485756
+  type: 'test'
+  ...
+# Subtest: SENSE-desert_pyramid-single-block
+ok 78 - SENSE-desert_pyramid-single-block
+  ---
+  duration_ms: 0.296503
+  type: 'test'
+  ...
+# Subtest: SENSE-jungle_temple-evidence
+ok 79 - SENSE-jungle_temple-evidence
+  ---
+  duration_ms: 0.474014
+  type: 'test'
+  ...
+# Subtest: SENSE-jungle_temple-single-block
+ok 80 - SENSE-jungle_temple-single-block
+  ---
+  duration_ms: 0.304548
+  type: 'test'
+  ...
+# Subtest: SENSE-ocean_monument-evidence
+ok 81 - SENSE-ocean_monument-evidence
+  ---
+  duration_ms: 0.641236
+  type: 'test'
+  ...
+# Subtest: SENSE-ocean_monument-single-block
+ok 82 - SENSE-ocean_monument-single-block
+  ---
+  duration_ms: 0.433409
+  type: 'test'
+  ...
+# Subtest: SENSE-ruined_portal-evidence
+ok 83 - SENSE-ruined_portal-evidence
+  ---
+  duration_ms: 1.933095
+  type: 'test'
+  ...
+# Subtest: SENSE-ruined_portal-single-block
+ok 84 - SENSE-ruined_portal-single-block
+  ---
+  duration_ms: 0.335115
+  type: 'test'
+  ...
+# Subtest: SENSE-mineshaft-evidence
+ok 85 - SENSE-mineshaft-evidence
+  ---
+  duration_ms: 0.486788
+  type: 'test'
+  ...
+# Subtest: SENSE-mineshaft-single-block
+ok 86 - SENSE-mineshaft-single-block
+  ---
+  duration_ms: 0.45604
+  type: 'test'
+  ...
+# Subtest: SENSE-end_city-evidence
+ok 87 - SENSE-end_city-evidence
+  ---
+  duration_ms: 0.49891
+  type: 'test'
+  ...
+# Subtest: SENSE-end_city-single-block
+ok 88 - SENSE-end_city-single-block
+  ---
+  duration_ms: 0.307654
+  type: 'test'
+  ...
+# Subtest: NAV-01 only already-open doors become passable
+ok 89 - NAV-01 only already-open doors become passable
+  ---
+  duration_ms: 85.718802
+  type: 'test'
+  ...
+# Subtest: STRATEGY-01 necessary survival work does not starvation-lock on reserve target
+ok 90 - STRATEGY-01 necessary survival work does not starvation-lock on reserve target
+  ---
+  duration_ms: 0.265385
+  type: 'test'
+  ...
+# Subtest: STRATEGY-02 essential work still pauses for actual hunger
+ok 91 - STRATEGY-02 essential work still pauses for actual hunger
+  ---
+  duration_ms: 0.112389
+  type: 'test'
+  ...
+# Subtest: STRATEGY-03 optional construction still respects reserve threshold
+ok 92 - STRATEGY-03 optional construction still respects reserve threshold
+  ---
+  duration_ms: 0.187029
+  type: 'test'
+  ...
+# Subtest: DANGER-07 opened door is not reported as head suffocation
+ok 93 - DANGER-07 opened door is not reported as head suffocation
+  ---
+  duration_ms: 0.180347
+  type: 'test'
+  ...
+# Subtest: DANGER-08 real full head obstruction still triggers retreat
+ok 94 - DANGER-08 real full head obstruction still triggers retreat
+  ---
+  duration_ms: 0.124282
+  type: 'test'
+  ...
+# Subtest: STRATEGY-04 respawn with empty inventory stays in known shelter at night
+ok 95 - STRATEGY-04 respawn with empty inventory stays in known shelter at night
+  ---
+  duration_ms: 9.444092
+  type: 'test'
+  ...
+# Subtest: STRATEGY-05 reserve shortage alone does not force nocturnal foraging
+ok 96 - STRATEGY-05 reserve shortage alone does not force nocturnal foraging
+  ---
+  duration_ms: 0.209181
+  type: 'test'
+  ...
+1..96
+# tests 96
+# suites 0
+# pass 96
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 357.043796

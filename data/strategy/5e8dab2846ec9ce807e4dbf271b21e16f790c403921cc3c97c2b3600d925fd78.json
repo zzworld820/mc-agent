@@ -1,0 +1,223 @@
+{
+  "schemaVersion": 1,
+  "home": {
+    "x": -2,
+    "y": 80,
+    "z": -8,
+    "door": {
+      "x": 0,
+      "y": 80,
+      "z": -8
+    },
+    "dimension": "overworld",
+    "kind": "cave"
+  },
+  "farm": {
+    "id": "457e2d00-18c5-4d7a-904e-735895b207f5",
+    "origin": {
+      "x": 14,
+      "y": 72,
+      "z": 11
+    },
+    "plots": [
+      {
+        "position": {
+          "x": 14,
+          "y": 72,
+          "z": 11
+        },
+        "crop": null
+      },
+      {
+        "position": {
+          "x": 14,
+          "y": 72,
+          "z": 12
+        },
+        "crop": null
+      },
+      {
+        "position": {
+          "x": 15,
+          "y": 72,
+          "z": 11
+        },
+        "crop": null
+      },
+      {
+        "position": {
+          "x": 16,
+          "y": 72,
+          "z": 11
+        },
+        "crop": null
+      },
+      {
+        "position": {
+          "x": 16,
+          "y": 72,
+          "z": 12
+        },
+        "crop": null
+      }
+    ],
+    "lamps": [
+      {
+        "soil": {
+          "x": 13,
+          "y": 72,
+          "z": 12
+        }
+      }
+    ],
+    "waters": [
+      {
+        "position": {
+          "x": 15,
+          "y": 72,
+          "z": 12
+        },
+        "owned": true
+      }
+    ],
+    "width": 3,
+    "depth": 2,
+    "dimension": "overworld",
+    "status": "building",
+    "expansions": [],
+    "harvestCycles": 0,
+    "lastTendedAt": 0,
+    "lastExpansionDay": 1
+  },
+  "storage": null,
+  "farmConfig": {},
+  "pastures": [],
+  "failures": {
+    "farm": {
+      "attempts": 5,
+      "reason": "找不到能走过去的路（我不会挖路、搭路）",
+      "retryAt": 1794834825946
+    },
+    "house": {
+      "attempts": 1,
+      "reason": "找不到能走过去的路（我不会挖路、搭路）",
+      "retryAt": 1794833644876
+    },
+    "pasture": {
+      "attempts": 1,
+      "reason": "缺少适合引导的鸡、牛、羊或对应饲料，暂缓新建栏位",
+      "retryAt": 1794833661402
+    },
+    "food": {
+      "attempts": 4,
+      "reason": "尚未补足口粮：随身 6 点，任务目标 16 点；主任务继续暂停",
+      "retryAt": 1794834804895
+    }
+  },
+  "lastGoal": {
+    "goal": "night",
+    "status": "paused",
+    "at": 1794836220376,
+    "reason": "随身口粮低于任务安全余量"
+  },
+  "partition": {
+    "agent": "QA_Agent",
+    "world": "fabric-regression-25565",
+    "dimension": "overworld",
+    "epoch": "initial"
+  },
+  "supplies": {
+    "warehouses": [],
+    "sourceFailures": {},
+    "productionDebt": {},
+    "activeTask": {
+      "profile": "local",
+      "goal": "night"
+    },
+    "pausedGoal": {
+      "goal": "farm",
+      "task": {
+        "profile": "local",
+        "goal": "farm"
+      },
+      "position": {
+        "x": 14.500002046501107,
+        "y": 62.00133597911215,
+        "z": 11.5
+      },
+      "reason": "先短暂停下进食",
+      "at": 1794833574979
+    },
+    "lastAssessment": {
+      "level": "insufficient",
+      "body": {
+        "health": 20,
+        "hunger": 20,
+        "saturation": 0.20000028610229492
+      },
+      "needsMeal": false,
+      "mealAvailable": true,
+      "meal": "cooked_chicken",
+      "food": {
+        "regular": 6,
+        "emergency": 0
+      },
+      "budget": {
+        "profile": "local",
+        "foodTarget": 16,
+        "foodMinimum": 8,
+        "torches": 0,
+        "minimumTorches": 0,
+        "tool": null,
+        "weapon": null,
+        "armorRequired": false,
+        "destination": null,
+        "estimate": "heuristic_not_guaranteed_range"
+      },
+      "foodTarget": 16,
+      "missing": [
+        "food"
+      ],
+      "ready": false,
+      "interrupt": true,
+      "reason": "随身口粮低于任务安全余量",
+      "at": 1794834724894
+    },
+    "retryAt": 1794834784894,
+    "lastMeal": {
+      "item": "cooked_chicken",
+      "before": 19,
+      "after": 20,
+      "at": 1794834869767,
+      "emergency": false
+    }
+  },
+  "updatedAt": 1794836220388,
+  "plannedShelter": {
+    "entrance": {
+      "x": 0,
+      "y": 80,
+      "z": -8
+    },
+    "direction": {
+      "x": -1,
+      "z": 0
+    },
+    "lateral": {
+      "x": 0,
+      "z": -1
+    }
+  },
+  "workshop": {
+    "x": 36,
+    "y": 69,
+    "z": 68,
+    "dimension": "overworld"
+  },
+  "heading": 2.9179029259790643,
+  "surveyPosition": {
+    "x": -20.38197455541216,
+    "y": 76,
+    "z": 8.5
+  }
+}

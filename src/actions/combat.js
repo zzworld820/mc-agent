@@ -59,7 +59,7 @@ export const combatActions = [
         max_distance: { type: 'number', description: '最远去多远找，默认 16，最大 32' },
       },
     },
-    run({ bot, tasks, player, isWhisper }, { mob, max_distance: maxDistance = 16 }) {
+    run({ bot, tasks, player, isWhisper, supplyResume }, { mob, max_distance: maxDistance = 16 }) {
       const range = Math.min(Number(maxDistance) || 16, MAX_SEARCH_DISTANCE);
       const wanted = mob ? String(mob).toLowerCase().replace(/^minecraft:/, '') : null;
 
@@ -76,7 +76,8 @@ export const combatActions = [
       if (!target) return `附近 ${range} 格内没有${wanted ?? '敌对怪物'}`;
 
       const label = `打 ${target.name}`;
-      tasks.start({ label, kind: 'combat', owner: player, isWhisper, report: 'always' }, ({ signal }) => fight(bot, target, signal));
+      tasks.start({ label, kind: 'combat', owner: player, isWhisper, report: 'always',
+        supply: { profile: 'local', risk: 'medium', resumePosition: supplyResume, descriptor: { action: 'attack_mob', args: { mob: wanted, max_distance: range } } } }, ({ signal }) => fight(bot, target, signal));
       return `已开始：${label}（${distanceTo(bot, target.position)} 格外）`;
     },
   },

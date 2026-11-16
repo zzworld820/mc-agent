@@ -24,14 +24,16 @@ export const movementActions = [
       },
       required: ['player'],
     },
-    run({ bot, tasks, player: requester, isWhisper }, { player }) {
+    run({ bot, tasks, player: requester, isWhisper, supplyResume }, { player }) {
       const target = findPlayerEntity(bot, player);
       if (!target) return `看不到玩家 ${player}（可能离得太远或不在同一个维度）`;
 
       const distance = distanceTo(bot, target.position);
       if (distance <= ARRIVE_DISTANCE + 1) return `已经在 ${player} 身边了（${distance} 格）`;
 
-      tasks.start({ label: `走向 ${player}`, kind: 'move', owner: requester, isWhisper, report: 'failure' }, async ({ signal }) => {
+      tasks.start({ label: `走向 ${player}`, kind: 'move', owner: requester, isWhisper, report: 'failure',
+        supply: distance <= 16 ? null : { profile: distance > 48 ? 'travel' : 'local', resumePosition: supplyResume, destination: { x: target.position.x, y: target.position.y, z: target.position.z },
+          descriptor: { action: 'come_to_player', args: { player } } } }, async ({ signal }) => {
         const { x, y, z } = target.position;
         await goTo(bot, new goals.GoalNear(x, y, z, ARRIVE_DISTANCE), { signal, timeoutMs: 60000 });
         return `走到 ${player} 身边了`;
@@ -50,10 +52,11 @@ export const movementActions = [
       },
       required: ['player'],
     },
-    run({ bot, tasks, player: requester, isWhisper }, { player }) {
+    run({ bot, tasks, player: requester, isWhisper, supplyResume }, { player }) {
       if (!findPlayerEntity(bot, player)) return `看不到玩家 ${player}，没法跟随`;
 
-      tasks.start({ label: `跟随 ${player}`, kind: 'follow', owner: requester, isWhisper, report: 'failure' }, async ({ signal }) => {
+      tasks.start({ label: `跟随 ${player}`, kind: 'follow', owner: requester, isWhisper, report: 'failure',
+        supply: { profile: 'travel', resumePosition: supplyResume, descriptor: { action: 'follow_player', args: { player } } } }, async ({ signal }) => {
         // dynamic = true：玩家一动，目标点就跟着更新
         bot.pathfinder.setGoal(new goals.GoalFollow(findPlayerEntity(bot, player), FOLLOW_DISTANCE), true);
         // 跟随没有“完成”的时候：每秒检查一次，玩家下线 / 走远到看不见就结束
@@ -78,16 +81,26 @@ export const movementActions = [
         x: { type: 'number' },
         y: { type: 'number' },
         z: { type: 'number' },
+        profile: { type: 'string', enum: ['local', 'travel', 'mining', 'expedition'], description: '可选，长途探索用 expedition，地下任务用 mining' },
+        needsLight: { type: 'boolean' },
+        expectedMinutes: { type: 'number', minimum: 0, maximum: 180 },
+        risk: { type: 'string', enum: ['low', 'medium', 'high'] },
       },
       required: ['x', 'y', 'z'],
     },
-    run({ bot, tasks, player, isWhisper }, { x, y, z }) {
+    run({ bot, tasks, player, isWhisper, supplyResume }, { x, y, z, profile, needsLight = false, expectedMinutes = 0, risk = 'low' }) {
       if (![x, y, z].every(Number.isFinite)) return '坐标格式不对，需要三个数字 x、y、z';
       const distance = Math.round(bot.entity.position.distanceTo({ x, y, z }));
+      profile ??= distance > 48 ? 'travel' : 'local';
+      if (!['local', 'travel', 'mining', 'expedition'].includes(profile) || !['low', 'medium', 'high'].includes(risk)
+        || !Number.isFinite(expectedMinutes) || expectedMinutes < 0 || expectedMinutes > 180) return '任务补给参数无效';
       if (distance > MAX_TRAVEL_DISTANCE) return `太远了（${distance} 格），我一次最多走 ${MAX_TRAVEL_DISTANCE} 格`;
 
       const where = formatPosition({ x, y, z });
-      tasks.start({ label: `前往 ${where}`, kind: 'move', owner: player, isWhisper, report: 'always' }, async ({ signal }) => {
+      tasks.start({ label: `前往 ${where}`, kind: 'move', owner: player, isWhisper, report: 'always',
+        supply: distance <= 16 && profile === 'local' && !needsLight && risk === 'low' && expectedMinutes === 0 ? null
+          : { profile, destination: { x, y, z }, needsLight, expectedMinutes, risk, resumePosition: supplyResume,
+          descriptor: { action: 'go_to', args: { x, y, z, profile, needsLight, expectedMinutes, risk } } } }, async ({ signal }) => {
         await goTo(bot, new goals.GoalNear(x, y, z, 1), { signal, timeoutMs: 120000 });
         return `到达 ${where}`;
       });

@@ -38,6 +38,19 @@ function fixDigTime(bot) {
  */
 export function useMovementProfile(bot, profile) {
   const movements = new Movements(bot);
+  const readMovementBlock = movements.getBlock.bind(movements);
+  movements.getBlock = (position, dx, dy, dz) => {
+    const block = readMovementBlock(position, dx, dy, dz);
+    // 原生寻路仍把已打开的门/栅栏门视为实心，导致安全模式无法进出自己的住所。
+    // 只认可服务器已确认的打开状态；不自动操作任何人的门。
+    if (block.position && (block.name.endsWith('_door') || block.name.endsWith('_fence_gate')) && block.getProperties().open === true) {
+      block.safe = true;
+      block.physical = false;
+      block.replaceable = false;
+      block.height = block.position.y;
+    }
+    return block;
+  };
   if (profile === 'safe') {
     movements.canDig = false;
     movements.allow1by1towers = false;
@@ -47,6 +60,31 @@ export function useMovementProfile(bot, profile) {
     for (const name of ['crafting_table', 'furnace', 'chest', 'bed']) {
       const block = bot.registry.blocksByName[name];
       if (block) movements.blocksCantBreak.add(block.id);
+    }
+    if (bot.strategySupervisor?.active || bot.supplySupervisor?.active) {
+      for (const block of bot.registry.blocksArray) {
+        if (block.name.endsWith('_fence') || block.name.endsWith('_fence_gate') || block.name.endsWith('_door')
+          || block.name.endsWith('_bed') || ['ladder', 'farmland', 'wheat', 'potatoes', 'carrots', 'beetroots'].includes(block.name)) {
+          movements.blocksCantBreak.add(block.id);
+        }
+      }
+      movements.exclusionAreasBreak.push((block) => {
+        const state = bot.strategySupervisor?.active ? bot.strategySupervisor.state : bot.supplySupervisor?.state;
+        if (!state || state.partition.dimension !== String(bot.game.dimension)) return 0;
+        const p = block.position;
+        const home = state.home;
+        const nearHome = home && Math.abs(p.x - home.x) <= 4 && Math.abs(p.z - home.z) <= 4 && Math.abs(p.y - home.y) <= 5;
+        const nearFarm = state.farm && p.x >= state.farm.origin.x - 2 && p.x <= state.farm.origin.x + (state.farm.width || 3) + 1
+          && p.z >= state.farm.origin.z - 2 && p.z <= state.farm.origin.z + (state.farm.depth || 2) + 1 && Math.abs(p.y - state.farm.origin.y) <= 3;
+        const storage = state.storage;
+        const nearStorage = storage?.origin && p.x >= storage.origin.x - 1 && p.x <= storage.origin.x + 3
+          && p.z >= storage.origin.z - 1 && p.z <= storage.origin.z + Math.ceil(storage.capacity / 2) * 2 + 1 && Math.abs(p.y - storage.origin.y) <= 4;
+        const nearRoom = state.house?.rooms?.some((room) => p.x >= room.origin.x - 1 && p.x <= room.origin.x + room.size.width
+          && p.z >= room.origin.z - 1 && p.z <= room.origin.z + room.size.depth && p.y >= room.origin.y - 1 && p.y <= room.origin.y + room.size.wallHeight + 2);
+        const nearPasture = state.pastures.some((pasture) => p.x >= pasture.origin.x - 1 && p.x <= pasture.origin.x + 5
+          && p.z >= pasture.origin.z - 1 && p.z <= pasture.origin.z + 5 && Math.abs(p.y - pasture.origin.y) <= 3);
+        return nearHome || nearFarm || nearPasture || nearStorage || nearRoom ? Infinity : 0;
+      });
     }
     // 垫脚用的方块：泥土、圆石、深板岩圆石、下界岩
     movements.scafoldingBlocks = ['dirt', 'cobblestone', 'cobbled_deepslate', 'netherrack']

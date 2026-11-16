@@ -1,0 +1,105 @@
+{
+  "startedAt": "2026-11-16T12:35:25.807Z",
+  "username": "QA_Agent",
+  "host": "127.0.0.1",
+  "port": 25565,
+  "targetDays": 100,
+  "observedCalendarTicks": 65660,
+  "activeTicks": 65660,
+  "deaths": 1,
+  "connections": 12,
+  "phase": "running",
+  "lastObservedAt": "2026-11-16T13:36:56.736Z",
+  "elapsedGameDays": 2,
+  "activeGameDays": 2.7358333333333333,
+  "worldDay": 3,
+  "worldTime": 90357,
+  "worldAge": 1419186,
+  "health": 20,
+  "food": 20,
+  "position": {
+    "x": -1.376100547100573,
+    "y": 80,
+    "z": -7.4997454194617745
+  },
+  "inventory": [],
+  "task": "自主生存（进度：自主生存：夜间避难）",
+  "home": {
+    "x": -2,
+    "y": 80,
+    "z": -8,
+    "door": {
+      "x": 0,
+      "y": 80,
+      "z": -8
+    },
+    "dimension": "overworld",
+    "kind": "cave"
+  },
+  "farm": {
+    "width": 3,
+    "depth": 2,
+    "status": "building",
+    "harvestCycles": 0
+  },
+  "storage": null,
+  "pastures": [],
+  "lastFailure": {
+    "goal": "night",
+    "status": "paused",
+    "at": 1794836216245,
+    "reason": "随身口粮低于任务安全余量"
+  },
+  "failures": {
+    "farm": {
+      "attempts": 5,
+      "reason": "找不到能走过去的路（我不会挖路、搭路）",
+      "retryAt": 1794834825946
+    },
+    "house": {
+      "attempts": 1,
+      "reason": "找不到能走过去的路（我不会挖路、搭路）",
+      "retryAt": 1794833644876
+    },
+    "pasture": {
+      "attempts": 1,
+      "reason": "缺少适合引导的鸡、牛、羊或对应饲料，暂缓新建栏位",
+      "retryAt": 1794833661402
+    },
+    "food": {
+      "attempts": 4,
+      "reason": "尚未补足口粮：随身 6 点，任务目标 16 点；主任务继续暂停",
+      "retryAt": 1794834804895
+    }
+  },
+  "plannedShelter": {
+    "entrance": {
+      "x": 0,
+      "y": 80,
+      "z": -8
+    },
+    "direction": {
+      "x": -1,
+      "z": 0
+    },
+    "lateral": {
+      "x": 0,
+      "z": -1
+    }
+  },
+  "danger": {
+    "at": 1794836216295,
+    "health": 20,
+    "food": 20,
+    "oxygen": 20,
+    "armorCoverage": 0,
+    "inWater": false,
+    "burning": false,
+    "starvationSuspected": false,
+    "threats": [],
+    "projectiles": [],
+    "reasons": [],
+    "retreat": false,
+    "recoveryNeeded": false
+  }
+}

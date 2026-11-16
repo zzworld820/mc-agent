@@ -4,6 +4,7 @@ import { countItem, goTo, sleep } from '../../actions/helpers.js';
 import { FUELS, SMELTING, WOOD_FUEL_PER_ITEM } from '../knowledge.js';
 import { nearestTreeWood } from './craft.js';
 import { placeBlockNear } from './world.js';
+import { reachHome } from '../../strategy/navigation.js';
 
 const { goals } = pathfinderPkg;
 
@@ -83,11 +84,13 @@ async function ensureFuel(ctx, items) {
 }
 
 /** 附近（24 格内）有熔炉就走过去用，没有就弄一个放下 */
-async function ensureFurnace(ctx) {
+export async function ensureFurnace(ctx) {
   const { bot, signal } = ctx;
   const furnaceId = bot.registry.blocksByName.furnace.id;
   const existing = bot.findBlock({ matching: furnaceId, maxDistance: 24 });
   if (existing) {
+    const home = ctx.state.home;
+    if (home && home.dimension === String(bot.game.dimension) && existing.position.distanceTo(home) < 5) await reachHome(ctx, home);
     if (existing.position.distanceTo(bot.entity.position) > 3.5) {
       const { x, y, z } = existing.position;
       await goTo(bot, new goals.GoalNear(x, y, z, 2), { signal, timeoutMs: 30000 });

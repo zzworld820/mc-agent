@@ -2,25 +2,19 @@
 import { countItem, throwIfAborted } from '../../actions/helpers.js';
 import { MEAT } from '../knowledge.js';
 import { smelt } from './smelt.js';
-import { attackUntilDead, collectDrops, explore, findNearestEntity } from './world.js';
-
-// 不算“能吃的”食物（有副作用）
-const BAD_FOODS = new Set(['rotten_flesh', 'spider_eye', 'poisonous_potato', 'pufferfish', 'chicken']);
+import { attackUntilDead, collectDrops, explore } from './world.js';
+import { carriedFood } from '../../supplies/inventory.js';
 
 /** 背包里的食物一共能顶多少饱食度 */
-export function foodPoints(bot) {
-  const foods = bot.registry.foodsByName;
-  return bot.inventory
-    .items()
-    .filter((item) => foods[item.name] && !BAD_FOODS.has(item.name))
-    .reduce((sum, item) => sum + foods[item.name].foodPoints * item.count, 0);
+export function foodPoints(bot, state = null) {
+  return carriedFood(bot, state).regular;
 }
 
 /** 打猎 + 烤肉，直到食物够 minPoints 点饱食度 */
-export async function ensureFood(ctx, minPoints) {
+export async function ensureFood(ctx, minPoints, { maxExplore = 8, exploreDistance = 48 } = {}) {
   const { bot, signal } = ctx;
   let explores = 0;
-  while (foodPoints(bot) < minPoints) {
+  while (foodPoints(bot, ctx.state) < minPoints) {
     throwIfAborted(signal);
     await ctx.rest?.();
 
@@ -31,15 +25,23 @@ export async function ensureFood(ctx, minPoints) {
       continue;
     }
 
-    const animal = findNearestEntity(bot, Object.keys(MEAT), 64);
+    if (bot.autonomyOptions?.allowCombat === false) throw new Error('战斗已关闭，暂缺足够的非战斗食物来源');
+    const animal = bot.nearestEntity((entity) => Object.keys(MEAT).includes(entity.name)
+      && entity.position.distanceTo(bot.entity.position) <= 64
+      && !(ctx.state.pastures ?? []).some((pasture) => {
+        const p = pasture.origin;
+        return pasture.dimension === String(bot.game.dimension) && entity.position.x >= p.x && entity.position.x <= p.x + 5
+          && entity.position.z >= p.z && entity.position.z <= p.z + 5 && Math.abs(entity.position.y - p.y) < 4
+          || entity.uuid && pasture.animals?.some((animal) => animal.uuid === entity.uuid);
+      }));
     if (!animal) {
       if (raw) {
         // 附近没动物了，手上的生肉不多也先烤了
         await smelt(ctx, raw.cooked, countItem(bot, raw.cooked) + countItem(bot, raw.raw));
         continue;
       }
-      if (explores++ >= 8) throw new Error('走了很远都没找到动物');
-      await explore(ctx);
+      if (explores++ >= maxExplore) throw new Error('本轮找食物未找到安全可用的动物，暂停复查其他补给来源');
+      await explore(ctx, exploreDistance);
       continue;
     }
 

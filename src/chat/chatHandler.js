@@ -72,8 +72,9 @@ export function createChatHandler({ npc, llm, actions }) {
   function onPlayerMessage(username, message, isWhisper) {
     autoSteps = 0; // 玩家说话了，自动步数重新计
     const withoutName = message.split(npc.name).join('').split(bot.username).join('').trim();
-    if (STOP_PATTERN.test(withoutName) && actions.interrupt()) {
-      log.info(`${username} 叫停，已立刻停下`);
+    if (STOP_PATTERN.test(withoutName)) {
+      bot.autonomyStartupCancelled = true;
+      if (actions.interrupt()) log.info(`${username} 叫停，已立刻停下`);
     }
     enqueue(() => handlePlayerMessage(username, message, isWhisper));
   }

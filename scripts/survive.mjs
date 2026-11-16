@@ -1,4 +1,4 @@
-// 自主发育模式：默认连本地测试服（npm run test-server），NPC 一进服就从零开始发育。
+// 自主模式：默认连接本地服并启动 survival；AUTONOMY_MODE=milestones 可切换旧发育路线。
 //
 // 用法：
 //   终端 1：npm run test-server

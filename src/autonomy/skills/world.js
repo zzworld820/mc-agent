@@ -4,6 +4,7 @@ import pathfinderPkg from 'mineflayer-pathfinder';
 import { Vec3 } from 'vec3';
 import { equipBestWeapon } from '../../actions/combat.js';
 import { goTo, sleep, throwIfAborted } from '../../actions/helpers.js';
+import { foodReservations } from '../../supplies/assessment.js';
 
 const { goals } = pathfinderPkg;
 
@@ -69,8 +70,10 @@ export async function tidyInventory(ctx, minFreeSlots = 3) {
   if (bot.inventory.emptySlotCount() >= minFreeSlots) return;
   const counts = {};
   for (const item of bot.inventory.items()) counts[item.name] = (counts[item.name] ?? 0) + item.count;
+  const foodKeep = foodReservations(bot, ctx.state);
   for (const [name, keep] of Object.entries(JUNK_KEEP)) {
-    const extra = (counts[name] ?? 0) - keep;
+    if (ctx.state.reservedItems?.has(name)) continue;
+    const extra = (counts[name] ?? 0) - Math.max(keep, foodKeep[name] || 0);
     if (extra <= 0) continue;
     try {
       await bot.toss(bot.registry.itemsByName[name].id, null, extra);

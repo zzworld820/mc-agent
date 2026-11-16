@@ -13,6 +13,7 @@ import { obtain } from './planner.js';
 import { ensureFood } from './skills/food.js';
 import { restIfNight } from './skills/sleep.js';
 import { collectDrops, escapeWater, explore } from './skills/world.js';
+import { startSurvival } from '../strategy/index.js';
 
 const { goals } = pathfinderPkg;
 const log = createLogger('autonomy');
@@ -25,7 +26,10 @@ const LOW_OXYGEN = 10;
  * 开始自主发育（已经在发育就不重复开始）
  * @param {{ bot: import('mineflayer').Bot, tasks: object, owner?: string|null, isWhisper?: boolean }} params
  */
-export function startAutonomy({ bot, tasks, owner = null, isWhisper = false }) {
+export function startAutonomy({ bot, tasks, owner = null, isWhisper = false, mode = 'survival' }) {
+  if (bot.autonomyOptions?.allowDig === false) return '自主采集已被 NPC_ALLOW_DIG=false 关闭，不能启动建设型自主生存';
+  if (mode === 'survival') return startSurvival({ bot, tasks, owner, isWhisper });
+  if (mode !== 'milestones') return '不支持的自主模式，使用 survival 或 milestones';
   if (tasks.current?.kind === 'autonomy') return `已经在自主发育了：${tasks.describe()}`;
   tasks.start({ label: '自主发育', kind: 'autonomy', owner, isWhisper, report: 'always' }, (task) => run(bot, task));
   return '开始自主发育：从砍树开始，一步步往铁器、钻石发展';

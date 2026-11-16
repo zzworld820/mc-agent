@@ -3,6 +3,7 @@ import pathfinderPkg from 'mineflayer-pathfinder';
 import { countItem, craftVerified, goTo } from '../../actions/helpers.js';
 import { INGREDIENT_COST, MINING, MOB_DROPS, SMELTING } from '../knowledge.js';
 import { placeBlockNear } from './world.js';
+import { reachHome } from '../../strategy/navigation.js';
 
 const { goals } = pathfinderPkg;
 
@@ -53,6 +54,9 @@ export async function ensureCraftingTable(ctx) {
   const tableId = bot.registry.blocksByName.crafting_table.id;
   const existing = bot.findBlock({ matching: tableId, maxDistance: 24 });
   if (existing) {
+    const home = ctx.state.home;
+    if (home && home.dimension === String(bot.game.dimension)
+      && existing.position.distanceTo(home) < 5) await reachHome(ctx, home);
     if (existing.position.distanceTo(bot.entity.position) > 3.5) {
       const { x, y, z } = existing.position;
       await goTo(bot, new goals.GoalNear(x, y, z, 2), { signal, timeoutMs: 30000 });

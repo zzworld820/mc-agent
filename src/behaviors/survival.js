@@ -7,6 +7,8 @@
 // Agent 的常见设计：大模型负责“想做什么”，本能层负责“活下去”。
 import { createLogger } from '../logger.js';
 import { equipBestWeapon, isFightable } from '../actions/combat.js';
+import { eatIfNeeded } from '../supplies/planner.js';
+import { shouldEat } from '../supplies/inventory.js';
 
 const log = createLogger('survival');
 
@@ -19,15 +21,8 @@ export function recentDeath(bot) {
   const death = lastDeaths.get(bot);
   return death && Date.now() - death.time < DEATH_MEMORY_MS ? death : null;
 }
-
-const EAT_WHEN_FOOD_BELOW = 15; // 饱食度满值 20
-// 受伤时：饱食度 ≥ 18 才会自动回血，所以掉血了就吃到满，而不是等饿了再吃
-const HURT_HEALTH = 14;
 const DEFEND_RANGE = 3.5;
 const DEFEND_COOLDOWN_MS = 650;
-
-// 吃了有副作用的食物，不自动吃
-const BAD_FOODS = new Set(['rotten_flesh', 'spider_eye', 'poisonous_potato', 'pufferfish', 'chorus_fruit', 'suspicious_stew']);
 
 /**
  * @param {import('mineflayer').Bot} bot
@@ -35,23 +30,20 @@ const BAD_FOODS = new Set(['rotten_flesh', 'spider_eye', 'poisonous_potato', 'pu
  */
 export function setupSurvival(bot, { tasks, allowCombat }) {
   trackOwnOxygen(bot);
+  const lifetime = new AbortController();
+  bot.once('end', () => lifetime.abort('连接断开'));
 
   // ---- 饿了就吃 ----
   let eating = false;
   bot.on('health', async () => {
-    const hungry = bot.food < EAT_WHEN_FOOD_BELOW;
-    const hurtAndNotFull = bot.health < HURT_HEALTH && bot.food < 20;
-    if (eating || !(hungry || hurtAndNotFull)) return;
+    if (eating || !shouldEat(bot)) return;
+    if (bot.strategySupervisor?.active || bot.supplySupervisor?.active) return; // 活动控制器先暂停技能，避免争抢手持物品
     if (bot.usingHeldItem) return; // 正在举盾 / 拉弓：这时候吃会冲突（吃也是“使用物品”），让正在打架的逻辑自己处理
     if (bot.targetDigBlock) return; // 正在挖方块，换手会打断，等下一次再吃
-    const food = pickFood(bot);
-    if (!food) return;
-
     eating = true;
     try {
-      await bot.equip(food, 'hand');
-      await bot.consume();
-      log.info(`饿了，吃了一个 ${food.name}（饱食度 ${bot.food}）`);
+      const state = bot.supplyState?.partition.dimension === String(bot.game.dimension) ? bot.supplyState : null;
+      await eatIfNeeded({ bot, state, signal: lifetime.signal, log: (message) => log.info(message) });
     } catch (err) {
       log.warn('吃东西失败：', err.message);
     } finally {
@@ -63,9 +55,10 @@ export function setupSurvival(bot, { tasks, allowCombat }) {
   let lastSwing = 0;
   bot.on('physicsTick', () => {
     if (!allowCombat || eating) return;
+    if (bot.strategySupervisor?.active || bot.supplySupervisor?.active) return;
     if (Date.now() - lastSwing < DEFEND_COOLDOWN_MS) return;
     const kind = tasks.current?.kind;
-    if (kind && !['follow', 'move', 'autonomy'].includes(kind)) return; // 在干别的活（砍树、打指定的怪），不分心
+    if (kind && !['follow', 'move', 'autonomy', 'build'].includes(kind)) return; // 在干别的活（砍树、打指定的怪），不分心
 
     // 恶魂火球飞到跟前时打它一下，能把火球打回去（真人玩家也是这么挡的）
     const fireball = bot.nearestEntity(
@@ -84,8 +77,8 @@ export function setupSurvival(bot, { tasks, allowCombat }) {
 
     lastSwing = Date.now();
     equipBestWeapon(bot)
-      .then(() => bot.lookAt(enemy.position.offset(0, enemy.height * 0.8, 0), true))
-      .then(() => bot.attack(enemy))
+      .then(() => { if (!bot.strategySupervisor?.retreating) return bot.lookAt(enemy.position.offset(0, enemy.height * 0.8, 0), true); })
+      .then(() => { if (!bot.strategySupervisor?.retreating) bot.attack(enemy); })
       .catch(() => {});
   });
 
@@ -115,15 +108,4 @@ function trackOwnOxygen(bot) {
       }
     }
   });
-}
-
-/** 挑背包里饱食度最高、没有副作用的食物 */
-function pickFood(bot) {
-  const foods = bot.registry.foodsByName;
-  return (
-    bot.inventory
-      .items()
-      .filter((item) => foods[item.name] && !BAD_FOODS.has(item.name))
-      .sort((a, b) => foods[b.name].foodPoints - foods[a.name].foodPoints)[0] ?? null
-  );
 }

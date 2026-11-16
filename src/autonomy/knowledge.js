@@ -28,6 +28,7 @@ export const MINING = {
 
 /** 冶炼：产物 ← 原料 */
 export const SMELTING = {
+  baked_potato: 'potato',
   iron_ingot: 'raw_iron',
   copper_ingot: 'raw_copper',
   gold_ingot: 'raw_gold',

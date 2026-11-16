@@ -6,6 +6,7 @@
 import pathfinderPkg from 'mineflayer-pathfinder';
 import { digWithTimeout, goTo, throwIfAborted } from '../../actions/helpers.js';
 import { collectDrops, explore, tidyInventory } from './world.js';
+import { isNaturalTree } from '../../actions/gathering.js';
 
 const { goals } = pathfinderPkg;
 
@@ -93,8 +94,19 @@ function findTarget(ctx, ids, searchDistance) {
   const now = Date.now();
   for (const position of positions) {
     if ((state.unreachable.get(position.toString()) ?? 0) > now) continue;
+    const protectedPositions = [state.home, ...(state.farm?.plots ?? []).map((plot) => plot.position),
+      ...(state.farm?.waters ?? []).map((entry) => entry.position), ...(state.farm?.lamps ?? []).map((entry) => entry.soil),
+      ...(state.storage?.chests ?? []).map((entry) => entry.position)];
+    if (protectedPositions.some((p) => p && Math.abs(position.x - p.x) <= 4 && Math.abs(position.z - p.z) <= 4 && Math.abs(position.y - p.y) <= 5)) continue;
+    if (state.house?.rooms?.some((room) => position.x >= room.origin.x - 1 && position.x <= room.origin.x + room.size.width
+      && position.z >= room.origin.z - 1 && position.z <= room.origin.z + room.size.depth && position.y >= room.origin.y - 1
+      && position.y <= room.origin.y + room.size.wallHeight + 2)) continue;
+    if ((state.pastures ?? []).some((pasture) => position.x >= pasture.origin.x - 1 && position.x <= pasture.origin.x + 5
+      && position.z >= pasture.origin.z - 1 && position.z <= pasture.origin.z + 5 && Math.abs(position.y - pasture.origin.y) <= 3)) continue;
     if (nearLiquid(bot, position)) continue; // 挖开会让岩浆 / 水灌进来（测试时真的淹死过）
-    return bot.blockAt(position);
+    const candidate = bot.blockAt(position);
+    if (candidate?.name.endsWith('_log') && !isNaturalTree(bot, position)) continue;
+    return candidate;
   }
   return null;
 }

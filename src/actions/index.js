@@ -10,13 +10,19 @@
 // 聊天和 Agent 循环那边一行都不用改。
 import { setupSurvival } from '../behaviors/survival.js';
 import { autonomyActions } from './autonomy.js';
+import { buildingActions } from './building.js';
+import { farmingActions } from './farming.js';
+import { supplyActions } from './supplies.js';
+import { runSuppliedTask } from '../supplies/supervisor.js';
 import { combatActions } from './combat.js';
 import { gatheringActions } from './gathering.js';
 import { haltBot, setupPathfinder } from './helpers.js';
 import { itemActions } from './items.js';
 import { movementActions } from './movement.js';
+import { memoryActions } from './memory.js';
 import { perceptionActions } from './perception.js';
 import { createTaskManager } from './taskManager.js';
+import { randomUUID } from 'node:crypto';
 
 /**
  * @typedef {object} ActionContext
@@ -36,10 +42,14 @@ import { createTaskManager } from './taskManager.js';
 // 按类别分组；enabled 返回 false 的组不会出现在工具清单里，大模型就根本不知道有这个能力
 const ACTION_GROUPS = [
   { actions: perceptionActions },
+  { actions: memoryActions },
   { actions: movementActions },
   { actions: itemActions },
   { actions: gatheringActions, enabled: (options) => options.allowDig },
   { actions: combatActions, enabled: (options) => options.allowCombat },
+  { actions: buildingActions, enabled: (options) => options.allowAutonomy },
+  { actions: farmingActions, enabled: (options) => options.allowAutonomy },
+  { actions: supplyActions, enabled: (options) => options.allowAutonomy },
   { actions: autonomyActions, enabled: (options) => options.allowAutonomy },
 ];
 
@@ -51,7 +61,45 @@ export function createActionRegistry(options) {
 
   let bot = null;
   // 任务被取消时，立刻让 NPC 停下脚步、停止挖掘
-  const tasks = createTaskManager({ onCancel: () => bot && haltBot(bot) });
+  function rememberTask(task, status, result = null) {
+    if (!task.memory) return;
+    const progress = { description: task.progress, result };
+    task.memory.session.enqueue(() => task.memory.session.manager.rememberTask(task.memory.context, {
+      id: task.memory.id, title: task.label, goal: { kind: task.kind, requestedBy: task.owner },
+      status, progress,
+    }));
+  }
+  const tasks = createTaskManager({
+    execute(task, work) {
+      const progress = task.setProgress;
+      task.setProgress = (text) => { progress(text); bot.emit('agentProgress', { kind: task.kind, label: task.label, text }); };
+      return runSuppliedTask(bot, task, work);
+    },
+    onStart(task) {
+      if (!bot?.memory?.enabled) return;
+      task.memory = { id: randomUUID(), session: bot.memory, context: bot.memory.context() };
+      rememberTask(task, 'running');
+    },
+    onCancel(task) {
+      if (bot) haltBot(bot);
+      rememberTask(task, 'cancelled');
+    },
+    onSettled(task, outcome) {
+      rememberTask(task, task.controller.signal.aborted ? 'cancelled' : outcome.ok ? 'completed' : 'failed', outcome.result);
+    },
+  });
+
+  async function runAction(name, args, { player, isWhisper }, supplyResume = null) {
+    const action = actions.find((item) => item.name === name);
+    if (!action) return `没有叫 ${name} 的动作`;
+    if (!bot?.entity) return '我还没进入世界，做不了';
+    try {
+      return await action.run({ bot, tasks, player, isWhisper, options, supplyResume,
+        runAction: (nextName, nextArgs, resumePosition) => runAction(nextName, nextArgs, { player, isWhisper }, resumePosition) }, args ?? {});
+    } catch (err) {
+      return `执行失败：${err.message}`;
+    }
+  }
 
   return {
     tasks,
@@ -60,6 +108,7 @@ export function createActionRegistry(options) {
     attach(newBot) {
       tasks.cancel('重新进服');
       bot = newBot;
+      bot.autonomyOptions = { allowDig: options.allowDig, allowCombat: options.allowCombat, allowAutonomy: options.allowAutonomy };
       setupPathfinder(bot);
       setupSurvival(bot, { tasks, allowCombat: options.allowCombat });
     },
@@ -81,16 +130,7 @@ export function createActionRegistry(options) {
      * @param {{ player: string, isWhisper: boolean }} context
      * @returns {Promise<string>}
      */
-    async run(name, args, { player, isWhisper }) {
-      const action = actions.find((item) => item.name === name);
-      if (!action) return `没有叫 ${name} 的动作`;
-      if (!bot?.entity) return '我还没进入世界，做不了';
-      try {
-        return await action.run({ bot, tasks, player, isWhisper, options }, args ?? {});
-      } catch (err) {
-        return `执行失败：${err.message}`;
-      }
-    },
+    run: runAction,
 
     /** 当前在做什么，例如“挖 5 个 oak_log（进度：2/5）” */
     describeActivity() {
