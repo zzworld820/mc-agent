@@ -1,10 +1,10 @@
 // 通用技能：放方块、捡掉落物、探索新区域、打一个生物。
 // 每个技能都接收 ctx = { bot, signal, state, log }，signal 被取消时要尽快停下。
 import pathfinderPkg from 'mineflayer-pathfinder';
-import { Vec3 } from 'vec3';
 import { equipBestWeapon } from '../../actions/combat.js';
 import { goTo, sleep, throwIfAborted } from '../../actions/helpers.js';
 import { foodReservations } from '../../supplies/assessment.js';
+import { placeBlockAt } from './build.js';
 
 const { goals } = pathfinderPkg;
 
@@ -39,8 +39,7 @@ export async function placeBlockNear(ctx, itemName) {
   for (const position of spots.slice(0, 8)) {
     throwIfAborted(ctx.signal);
     try {
-      await bot.equip(item, 'hand');
-      await bot.placeBlock(bot.blockAt(position.offset(0, -1, 0)), new Vec3(0, 1, 0));
+      await placeBlockAt(ctx, position, itemName);
       const placed = bot.blockAt(position);
       if (placed?.name === itemName) {
         ctx.log(`放下了 ${itemName}`);

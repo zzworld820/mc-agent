@@ -1,7 +1,7 @@
 import { Vec3 } from 'vec3';
 import pathfinderPkg from 'mineflayer-pathfinder';
 import { digWithTimeout, goTo, sleep, throwIfAborted, useMovementProfile } from '../actions/helpers.js';
-import { placeBlockAt, furnishHouse } from '../autonomy/skills/build.js';
+import { placeBlockAt, furnishHouse, rememberProjectRooms } from '../autonomy/skills/build.js';
 import { planHouseShell } from './models.js';
 import { saveHouseProject } from './projects.js';
 import { reachHome } from '../strategy/navigation.js';
@@ -98,6 +98,7 @@ export async function expandVertical(ctx, project, { direction, moduleId }) {
   const extension = existing || { module: structuredClone(module), origin: plain(origin), parentOrigin: plain(parentOrigin), status: 'building', started: false };
   validateRoom(ctx.bot, project, extension, shaft);
   if (!existing) project.extensions.push(extension);
+  rememberProjectRooms(ctx, project);
   project.verticalAccess = shaft;
   await saveHouseProject(project, ctx.bot.memory);
   if (ctx.state.house?.projectId === project.id) {

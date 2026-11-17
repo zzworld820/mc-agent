@@ -7,6 +7,7 @@ import pathfinderPkg from 'mineflayer-pathfinder';
 import { digWithTimeout, goTo, throwIfAborted } from '../../actions/helpers.js';
 import { collectDrops, explore, tidyInventory } from './world.js';
 import { isNaturalTree } from '../../actions/gathering.js';
+import { leaveHome } from '../../strategy/navigation.js';
 
 const { goals } = pathfinderPkg;
 
@@ -24,6 +25,7 @@ export async function mineUntil(ctx, blockNames, isDone, { searchDistance = 64, 
   const { bot, signal } = ctx;
   const ids = blockNames.map((name) => bot.registry.blocksByName[name]?.id).filter((id) => id !== undefined);
   if (ids.length === 0) throw new Error(`不认识方块 ${blockNames.join('/')}`);
+  if (bot.strategySupervisor?.active) await leaveHome(ctx, ctx.state.home);
 
   let explores = 0;
   let failures = 0;
@@ -98,7 +100,8 @@ function findTarget(ctx, ids, searchDistance) {
       ...(state.farm?.waters ?? []).map((entry) => entry.position), ...(state.farm?.lamps ?? []).map((entry) => entry.soil),
       ...(state.storage?.chests ?? []).map((entry) => entry.position)];
     if (protectedPositions.some((p) => p && Math.abs(position.x - p.x) <= 4 && Math.abs(position.z - p.z) <= 4 && Math.abs(position.y - p.y) <= 5)) continue;
-    if (state.house?.rooms?.some((room) => position.x >= room.origin.x - 1 && position.x <= room.origin.x + room.size.width
+    const rooms = [...(state.house?.rooms ?? []), ...Object.values(state.buildingRooms ?? {}).flat()];
+    if (rooms.some((room) => position.x >= room.origin.x - 1 && position.x <= room.origin.x + room.size.width
       && position.z >= room.origin.z - 1 && position.z <= room.origin.z + room.size.depth && position.y >= room.origin.y - 1
       && position.y <= room.origin.y + room.size.wallHeight + 2)) continue;
     if ((state.pastures ?? []).some((pasture) => position.x >= pasture.origin.x - 1 && position.x <= pasture.origin.x + 5

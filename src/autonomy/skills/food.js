@@ -4,6 +4,7 @@ import { MEAT } from '../knowledge.js';
 import { smelt } from './smelt.js';
 import { attackUntilDead, collectDrops, explore } from './world.js';
 import { carriedFood } from '../../supplies/inventory.js';
+import { isFightable } from '../../actions/combat.js';
 
 /** 背包里的食物一共能顶多少饱食度 */
 export function foodPoints(bot, state = null) {
@@ -20,7 +21,7 @@ export async function ensureFood(ctx, minPoints, { maxExplore = 8, exploreDistan
 
     // 先把背包里的生肉烤了
     const raw = Object.values(MEAT).find(({ raw }) => countItem(bot, raw) > 0);
-    if (raw && countItem(bot, raw.raw) >= 3) {
+    if (raw && (countItem(bot, raw.raw) >= 3 || bot.health < 14 || bot.food < 18)) {
       await smelt(ctx, raw.cooked, countItem(bot, raw.cooked) + countItem(bot, raw.raw));
       continue;
     }
@@ -28,6 +29,7 @@ export async function ensureFood(ctx, minPoints, { maxExplore = 8, exploreDistan
     if (bot.autonomyOptions?.allowCombat === false) throw new Error('战斗已关闭，暂缺足够的非战斗食物来源');
     const animal = bot.nearestEntity((entity) => Object.keys(MEAT).includes(entity.name)
       && entity.position.distanceTo(bot.entity.position) <= 64
+      && !Object.values(bot.entities).some((enemy) => isFightable(enemy) && enemy.position.distanceTo(entity.position) < 16)
       && !(ctx.state.pastures ?? []).some((pasture) => {
         const p = pasture.origin;
         return pasture.dimension === String(bot.game.dimension) && entity.position.x >= p.x && entity.position.x <= p.x + 5

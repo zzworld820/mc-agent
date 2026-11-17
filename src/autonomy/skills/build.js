@@ -132,10 +132,11 @@ export async function buildHouse(ctx, { style = 'starter', modelId = style, resu
     await goTo(ctx.bot, new goals.GoalNear(origin.x, origin.y + 1, origin.z, 4), { signal: ctx.signal, timeoutMs: 90000 });
   }
   const site = project ? { origin: toPosition(project.origin), existing: true }
-    : findHouseSite(ctx.bot, plan, { model: activeModel, emptyOnly: true });
+    : await findHouseSiteAsync(ctx.bot, plan, { model: activeModel, emptyOnly: true }, ctx.signal);
   if (!site) throw new Error(`附近没有连续 ${plan.width}x${plan.depth}、落地且安全的空地，无法安全开工`);
   if (!isSafeHouseSite(ctx.bot, site.origin, plan, activeModel)) throw new Error('原工程地基或周边环境已改变，停止施工');
   project ??= createHouseProject(ctx.bot, activeModel, site.origin);
+  rememberProjectRooms(ctx, project);
   ctx.state.activeHouseProjectId = project.id;
   await ctx.checkpoint?.();
   await saveHouseProject(project, ctx.bot.memory);
@@ -165,7 +166,7 @@ export async function expandHouse(ctx, { modelId, moduleId, projectId, direction
   // 兼容框架加入前的 starter 房屋；不靠相似方块猜测其他模型。
   if (!project && !projectId && (!modelId || modelId === 'starter')) {
     const model = await getHouseModel('starter');
-    const base = findHouseSite(ctx.bot, model.size, { existingOnly: true, model });
+    const base = await findHouseSiteAsync(ctx.bot, model.size, { existingOnly: true, model }, ctx.signal);
     if (base) {
       project = createHouseProject(ctx.bot, model, base.origin);
       project.status = 'complete';
@@ -237,6 +238,7 @@ function isSafeProjectRoom(bot, project, origin, size) {
 }
 
 async function runProjectOperation(ctx, project, operation, work) {
+  rememberProjectRooms(ctx, project);
   try {
     throwIfAborted(ctx.signal);
     const result = await work();
@@ -248,6 +250,12 @@ async function runProjectOperation(ctx, project, operation, work) {
       .catch((storageError) => ctx.log(`施工反馈保存失败：${storageError.message}`));
     throw err;
   }
+}
+
+export function rememberProjectRooms(ctx, project) {
+  ctx.state.buildingRooms ??= {};
+  ctx.state.buildingRooms[project.id] = [{ origin: project.origin, size: project.model.size },
+    ...project.extensions.map((entry) => ({ origin: entry.origin, size: entry.module.size }))];
 }
 
 async function obtainShellMaterials(ctx, model, size, { origin, sharedFront = false }) {
@@ -530,41 +538,83 @@ function isSafeCaveSite(bot, entrance, direction, lateral) {
   return true;
 }
 
-export function findHouseSite(bot, plan = { width: 7, depth: 7, wallHeight: 3 }, { existingOnly = false, emptyOnly = false, model } = {}) {
+export function findHouseSite(bot, plan, options) {
+  const search = searchHouseSites(bot, plan, options);
+  let step;
+  do { step = search.next(); } while (!step.done);
+  return step.value;
+}
+
+export async function findHouseSiteAsync(bot, plan, options, signal) {
+  const search = searchHouseSites(bot, plan, options);
+  while (true) {
+    throwIfAborted(signal);
+    const step = search.next();
+    if (step.done) return step.value;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
+function clearFreshFootprint(bot, origin, plan) {
+  for (let x = 0; x < plan.width; x++) for (let z = 0; z < plan.depth; z++) for (let y = 0; y <= (plan.wallHeight ?? 3) + 1; y++) {
+    if (!BUILD_BLOCKS.has(bot.blockAt(origin.offset(x, y, z))?.name)) return false;
+  }
+  return true;
+}
+
+function* searchHouseSites(bot, plan = { width: 7, depth: 7, wallHeight: 3 }, { existingOnly = false, emptyOnly = false, model } = {}) {
   const feet = bot.entity.position.floored();
   const allowed = new Set([...HOUSE_BLOCKS, ...Object.values(model?.palette ?? {})]);
   const candidates = [];
+  const origins = [];
+  if (!existingOnly) {
+    const grounds = new Set(['grass_block', 'dirt', 'coarse_dirt', 'podzol', 'sand', 'stone']);
+    for (let dx = -32; dx <= 32; dx += 2) for (let dz = -32; dz <= 32; dz += 2) {
+      for (let y = feet.y + 24; y >= feet.y - 32; y--) {
+        const point = new Vec3(feet.x + dx, y, feet.z + dz);
+        const block = bot.blockAt(point);
+        if (!block) break;
+        if (grounds.has(block.name) && BUILD_BLOCKS.has(bot.blockAt(point.offset(0, 1, 0))?.name)) {
+          origins.push(point.offset(0, 1, 0));
+          break;
+        }
+      }
+      yield;
+    }
+  }
   for (let dx = -HOUSE_SEARCH_RADIUS; dx <= HOUSE_SEARCH_RADIUS; dx++) {
     for (let dz = -HOUSE_SEARCH_RADIUS; dz <= HOUSE_SEARCH_RADIUS; dz++) {
       if (!existingOnly && Math.abs(dx) < 4 && Math.abs(dz) < 4) continue;
-      for (let dy = -2; dy <= 2; dy++) {
-        const origin = feet.offset(dx, dy, dz);
-        if (!isSafeHouseSite(bot, origin, plan, model)) continue;
-        let valid = true;
-        let existing = 0;
-        let existingFloor = 0;
-        let existingRoof = 0;
-        let existingPerimeter = 0;
-        for (let x = 0; x < plan.width && valid; x++) {
-          for (let z = 0; z < plan.depth && valid; z++) {
-            if (allowed.has(bot.blockAt(origin.offset(x, 0, z))?.name)) existingFloor += 1;
-            for (let y = 0; y <= plan.wallHeight + 1; y++) {
-              if (allowed.has(bot.blockAt(origin.offset(x, y, z))?.name)) {
-                existing += 1;
-                if (y === plan.wallHeight + 1) existingRoof += 1;
-                if (y >= 1 && y <= plan.wallHeight && isPerimeter(x, z, plan.width, plan.depth)) existingPerimeter += 1;
-              }
-            }
+      for (let dy = -2; dy <= 2; dy++) origins.push(feet.offset(dx, dy, dz));
+    }
+  }
+  origins.sort((a, b) => a.distanceTo(feet) - b.distanceTo(feet));
+  for (const origin of origins) {
+    yield;
+    if (emptyOnly && !clearFreshFootprint(bot, origin, plan)) continue;
+    if (!isSafeHouseSite(bot, origin, plan, model)) continue;
+    let existing = 0;
+    let existingFloor = 0;
+    let existingRoof = 0;
+    let existingPerimeter = 0;
+    for (let x = 0; x < plan.width; x++) {
+      for (let z = 0; z < plan.depth; z++) {
+        if (allowed.has(bot.blockAt(origin.offset(x, 0, z))?.name)) existingFloor++;
+        for (let y = 0; y <= plan.wallHeight + 1; y++) {
+          if (allowed.has(bot.blockAt(origin.offset(x, y, z))?.name)) {
+            existing++;
+            if (y === plan.wallHeight + 1) existingRoof++;
+            if (y >= 1 && y <= plan.wallHeight && isPerimeter(x, z, plan.width, plan.depth)) existingPerimeter++;
           }
         }
-        const completeLike = existingFloor >= Math.ceil(plan.width * plan.depth * 0.9)
-          && existingRoof >= Math.ceil(plan.width * plan.depth * 0.9)
-          && existingPerimeter >= Math.ceil((plan.width * 2 + plan.depth * 2 - 4) * 1.5);
-        const existingScore = completeLike ? existing : 0;
-        if (emptyOnly && existing > 0) continue;
-        if (valid && (!existingOnly || existingScore > 0)) candidates.push({ origin, existing: existingScore });
       }
     }
+    const completeLike = existingFloor >= Math.ceil(plan.width * plan.depth * 0.9)
+      && existingRoof >= Math.ceil(plan.width * plan.depth * 0.9)
+      && existingPerimeter >= Math.ceil((plan.width * 2 + plan.depth * 2 - 4) * 1.5);
+    if (emptyOnly && existing > 0) continue;
+    if (emptyOnly) return { origin, existing: false };
+    if (!existingOnly || completeLike) candidates.push({ origin, existing: completeLike ? existing : 0 });
   }
   candidates.sort((a, b) => b.existing - a.existing || a.origin.distanceTo(feet) - b.origin.distanceTo(feet));
   return candidates[0] ? { origin: candidates[0].origin, existing: candidates[0].existing > 0 } : null;

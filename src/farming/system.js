@@ -111,13 +111,19 @@ function planArea(bot, farm, width, depth) {
   return { plots: added.filter((p) => !reserved.has(key(p))).map((p) => ({ position: plain(p), crop: null })), waters, lamps };
 }
 
-function findSite(ctx, anchor, width, depth) {
+async function findSite(ctx, anchor, width, depth) {
   const bot = ctx.bot;
   const waters = bot.findBlocks({ point: anchor, matching: bot.registry.blocksByName.water.id, maxDistance: 24, count: 60 });
   const origins = waters.flatMap((p) => [-4, -1, 1].flatMap((x) => [-4, -1, 1].map((z) => p.offset(x, 0, z))));
   const feet = bot.entity.position.floored();
-  for (let x = -16; x <= 16; x += 8) for (let z = -16; z <= 16; z += 8) origins.push(feet.offset(x, -1, z));
+  const local = [];
+  for (let x = -12; x <= 12; x++) for (let z = -12; z <= 12; z++) for (let y = -3; y <= 1; y++) local.push(feet.offset(x, y, z));
+  local.sort((a, b) => a.distanceTo(feet) - b.distanceTo(feet));
+  origins.push(...local);
+  let checked = 0;
   for (const origin of origins) {
+    throwIfAborted(ctx.signal);
+    if (++checked % 8 === 0) await new Promise((resolve) => setImmediate(resolve));
     const farm = { origin: plain(origin), plots: [], lamps: [], waters: waters.filter((p) => p.y === origin.y).map((p) => ({ position: plain(p), owned: false })) };
     const plan = planArea(bot, farm, width, depth);
     if (plan && plan.plots.length) return { farm, plan };
@@ -239,7 +245,7 @@ export async function ensureFarm(ctx, { anchor = ctx.bot.entity.position } = {})
   await gatherSeeds(ctx);
   if (!ctx.state.farm) {
     if (!CROPS.some((crop) => countItem(ctx.bot, crop.seed))) return { deferred: true, reason: '未取得种植材料' };
-    const site = findSite(ctx, farmPoint(anchor), settings.width, settings.depth);
+    const site = await findSite(ctx, farmPoint(anchor), settings.width, settings.depth);
     if (!site) return { deferred: true, reason: '没有适合所配置尺寸的安全地基' };
     ctx.state.farm = { id: randomUUID(), ...site.farm, ...site.plan, waters: [...site.farm.waters, ...site.plan.waters],
       width: settings.width, depth: settings.depth, dimension: String(ctx.bot.game.dimension), status: 'building',

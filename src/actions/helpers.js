@@ -1,6 +1,8 @@
 // 动作共用的小工具：可取消的等待和寻路、按名字找方块 / 物品 / 玩家。
 // 所有错误信息都是中文，因为它们最后会作为“工具结果”交给大模型，再转述给玩家。
 import pathfinderPkg from 'mineflayer-pathfinder';
+import physicsPkg from 'prismarine-physics';
+import { Vec3 } from 'vec3';
 
 const { pathfinder, Movements } = pathfinderPkg;
 
@@ -55,6 +57,8 @@ export function useMovementProfile(bot, profile) {
     movements.canDig = false;
     movements.allow1by1towers = false;
     movements.scafoldingBlocks = [];
+    movements.allowParkour = false;
+    movements.maxDropDown = 3;
   } else {
     // 自己放的工作台、熔炉、箱子不要挖掉
     for (const name of ['crafting_table', 'furnace', 'chest', 'bed']) {
@@ -79,7 +83,8 @@ export function useMovementProfile(bot, profile) {
         const storage = state.storage;
         const nearStorage = storage?.origin && p.x >= storage.origin.x - 1 && p.x <= storage.origin.x + 3
           && p.z >= storage.origin.z - 1 && p.z <= storage.origin.z + Math.ceil(storage.capacity / 2) * 2 + 1 && Math.abs(p.y - storage.origin.y) <= 4;
-        const nearRoom = state.house?.rooms?.some((room) => p.x >= room.origin.x - 1 && p.x <= room.origin.x + room.size.width
+        const rooms = [...(state.house?.rooms ?? []), ...Object.values(state.buildingRooms ?? {}).flat()];
+        const nearRoom = rooms.some((room) => p.x >= room.origin.x - 1 && p.x <= room.origin.x + room.size.width
           && p.z >= room.origin.z - 1 && p.z <= room.origin.z + room.size.depth && p.y >= room.origin.y - 1 && p.y <= room.origin.y + room.size.wallHeight + 2);
         const nearPasture = state.pastures.some((pasture) => p.x >= pasture.origin.x - 1 && p.x <= pasture.origin.x + 5
           && p.z >= pasture.origin.z - 1 && p.z <= pasture.origin.z + 5 && Math.abs(p.y - pasture.origin.y) <= 3);
@@ -92,6 +97,31 @@ export function useMovementProfile(bot, profile) {
       .filter(Boolean);
     // 尽量别贴着岩浆走：被怪一顶就掉进去了（下界里测试时被疣猪兽顶进岩浆死过）
     movements.exclusionAreasStep = [(block) => (isNextToLava(bot, block.position) ? 50 : 0)];
+  }
+  if (profile === 'safe' || bot.strategySupervisor?.active || bot.supplySupervisor?.active) {
+    const diagonal = movements.getMoveDiagonal.bind(movements);
+    movements.getMoveDiagonal = (node, direction, neighbors) => {
+      if (profile === 'safe') return;
+      // 高差转角的对角路线可能通过图搜索却无法通过实际跳跃，改走直角站位。
+      const columns = [[direction.x, 0], [0, direction.z], [direction.x, direction.z]];
+      const clear = columns.every(([x, z]) => movements.getBlock(node, x, -1, z).physical
+        && !movements.getBlock(node, x, 0, z).physical && !movements.getBlock(node, x, 1, z).physical);
+      if (clear) diagonal(node, direction, neighbors);
+    };
+  }
+  if (bot.strategySupervisor?.active || bot.supplySupervisor?.active) {
+    movements.exclusionAreasStep.push((block) => {
+      const armored = [5, 6, 7, 8].filter((slot) => bot.inventory.slots[slot]).length >= 2;
+      const dangerous = Object.values(bot.entities).some((entity) => {
+        if (entity.type !== 'hostile' || entity === bot.entity) return false;
+        const ranged = ['witch', 'pillager', 'skeleton', 'stray', 'bogged'].includes(entity.name);
+        if (armored && !ranged) return false;
+        const range = ranged ? 16 : 9;
+        const distance = entity.position.distanceTo(block.position);
+        return distance < range && distance < entity.position.distanceTo(bot.entity.position) - 0.1;
+      });
+      return dangerous ? 1000 : 0;
+    });
   }
   bot.pathfinder.setMovements(movements);
   bot.pathfinder.thinkTimeout = profile === 'safe' ? 5000 : 10000; // 挖路的路线复杂，多给点时间算
@@ -117,7 +147,27 @@ export function haltBot(bot) {
  * @param {object} goal  mineflayer-pathfinder 的 goal
  */
 export async function goTo(bot, goal, { signal, timeoutMs = 30000, stuckMs = 20000 } = {}) {
+  try { return await goToNative(bot, goal, { signal, timeoutMs, stuckMs }); }
+  catch (error) {
+    throwIfAborted(signal);
+    if (!bot.physics || bot.pathfinder.movements?.canDig !== false) throw error;
+    return followPrecisePath(bot, goal, { signal, timeoutMs });
+  }
+}
+
+async function goToNative(bot, goal, { signal, timeoutMs, stuckMs }) {
   throwIfAborted(signal);
+  await alignStandingPosition(bot, signal);
+
+  const movements = bot.pathfinder.movements;
+  const blocked = new Set();
+  let currentPath = [];
+  let reroutes = 0;
+  const blockKey = (position) => `${Math.floor(position.x)},${Math.floor(position.y)},${Math.floor(position.z)}`;
+  const avoidBlocked = (block) => blocked.has(blockKey(block.position)) ? 1000 : 0;
+  movements?.exclusionAreasStep.push(avoidBlocked);
+  const onPath = (result) => { currentPath = result.path; };
+  bot.on('path_update', onPath);
 
   const walking = bot.pathfinder.goto(goal);
   walking.catch(() => {}); // 被我们主动打断时它也会报错，这里先接住，避免“未处理的 Promise 错误”
@@ -140,6 +190,12 @@ export async function goTo(bot, goal, { signal, timeoutMs = 30000, stuckMs = 200
       } else if (Date.now() - lastProgress > stuckMs) {
         bot.pathfinder.setGoal(null);
         reject(new Error(`卡住了，${Math.round(stuckMs / 1000)} 秒没挪动`));
+      } else if (Date.now() - lastProgress > 4000 && currentPath.length && reroutes < 3 && !bot.entity.isInWater) {
+        // 图上的边可能无法通过实际碰撞。排除这次卡住的下一站，重新寻找路线。
+        blocked.add(blockKey(currentPath[0]));
+        reroutes++;
+        lastProgress = Date.now();
+        bot.pathfinder.setGoal(goal);
       }
     }, 1000);
     onAbort = () => {
@@ -158,12 +214,106 @@ export async function goTo(bot, goal, { signal, timeoutMs = 30000, stuckMs = 200
     clearTimeout(timer);
     clearInterval(watchdog);
     signal?.removeEventListener('abort', onAbort);
+    bot.removeListener('path_update', onPath);
+    if (movements) movements.exclusionAreasStep = movements.exclusionAreasStep.filter((rule) => rule !== avoidBlocked);
   }
 
   // pathfinder 在“完全找不到路”时也会当成功返回，所以要自己确认真的到了
   if (!goal.isEnd(bot.entity.position.floored())) {
     throw new Error('找不到能走过去的路（我不会挖路、搭路）');
   }
+}
+
+// 安全模式的普通执行器卡住后，逐个站位验证并走到中心，避免提前切角。
+async function followPrecisePath(bot, goal, { signal, timeoutMs }) {
+  haltBot(bot);
+  const deadline = Date.now() + Math.min(timeoutMs, 45000);
+  const generator = bot.pathfinder.getPathFromTo(bot.pathfinder.movements, bot.entity.position, goal, { optimizePath: false });
+  let route;
+  do {
+    throwIfAborted(signal);
+    const next = generator.next();
+    if (next.done || Date.now() >= deadline) throw new Error('安全站位路线规划超时');
+    route = next.value.result;
+    await new Promise((resolve) => setImmediate(resolve));
+  } while (route.status === 'partial');
+  if (route.status !== 'success' || route.path.some((node) => node.toBreak.length || node.toPlace.length)) throw new Error('没有可直接步行的安全站位路线');
+  const world = { getBlock(position) {
+    const block = bot.blockAt(position);
+    if (!block) throw new Error('安全站位路线经过未加载区块');
+    return block;
+  } };
+  const { PlayerState } = physicsPkg;
+  const controlFor = (position, velocity, target) => {
+    const x = (target.x - position.x) * 0.08 - velocity.x * 0.8;
+    const z = (target.z - position.z) * 0.08 - velocity.z * 0.8;
+    return { yaw: Math.atan2(-x, -z), forward: Math.hypot(x, z) > 0.004, jump: target.y > position.y + 0.1 };
+  };
+  const reached = (position, target, grounded) => grounded
+    && Math.hypot(position.x - target.x, position.z - target.z) < 0.18 && Math.abs(position.y - target.y) < 0.2;
+  try {
+    for (const node of route.path) {
+      throwIfAborted(signal);
+      const target = new Vec3(node.x + 0.5, node.y, node.z + 0.5);
+      if (Math.abs(target.y - bot.entity.position.y) > 3) throw new Error('精确步行路线包含过大高差');
+      const controls = { forward: false, back: false, left: false, right: false, jump: false, sprint: false, sneak: false };
+      const simulation = new PlayerState(bot, controls);
+      let feasible = reached(simulation.pos, target, simulation.onGround);
+      for (let tick = 0; tick < 80 && !feasible; tick++) {
+        const move = controlFor(simulation.pos, simulation.vel, target);
+        controls.forward = move.forward;
+        controls.jump = move.jump;
+        simulation.yaw = move.yaw;
+        bot.physics.simulatePlayer(simulation, world);
+        if (simulation.isInLava || simulation.pos.y < Math.min(target.y, bot.entity.position.y) - 3) break;
+        feasible = reached(simulation.pos, target, simulation.onGround);
+      }
+      if (!feasible) throw new Error('下一站未通过实际碰撞模型验证');
+      const nodeDeadline = Math.min(deadline, Date.now() + 5000);
+      while (!reached(bot.entity.position, target, bot.entity.onGround)) {
+        throwIfAborted(signal);
+        if (Date.now() >= nodeDeadline) throw new Error('精确步行未到达下一站');
+        const move = controlFor(bot.entity.position, bot.entity.velocity, target);
+        await bot.look(move.yaw, 0, true);
+        bot.setControlState('forward', move.forward);
+        bot.setControlState('jump', move.jump);
+        await sleep(50, signal);
+      }
+      bot.clearControlStates();
+    }
+    if (!goal.isEnd(bot.entity.position.floored())) throw new Error('精确步行尚未到达目标');
+  } finally { bot.clearControlStates(); }
+}
+
+// 跨在方块边缘时先回到有支撑的格子中心，减少转角与跳跃的起点误差。
+async function alignStandingPosition(bot, signal) {
+  const position = bot.entity.position;
+  if (!bot.blockAt || !bot.entity.onGround || Math.abs(position.y - Math.round(position.y)) > 0.01) return;
+  const feet = position.floored();
+  const candidates = [];
+  for (let x = -1; x <= 1; x++) for (let z = -1; z <= 1; z++) {
+    const point = feet.offset(x, 0, z);
+    const floor = bot.blockAt(point.offset(0, -1, 0));
+    const body = bot.blockAt(point);
+    if (floor?.boundingBox !== 'block' || ['magma_block', 'campfire', 'cactus', 'powder_snow'].includes(floor.name)) continue;
+    if (body?.boundingBox !== 'empty' || ['water', 'lava', 'fire', 'soul_fire'].includes(body.name)
+      || bot.blockAt(point.offset(0, 1, 0))?.boundingBox !== 'empty') continue;
+    const center = point.offset(0.5, 0, 0.5);
+    if (center.distanceTo(position) <= 1.2) candidates.push(center);
+  }
+  candidates.sort((a, b) => a.distanceTo(position) - b.distanceTo(position));
+  if (!candidates.length) return;
+  haltBot(bot);
+  const target = candidates[0];
+  const deadline = Date.now() + 1200;
+  try {
+    while (target.distanceTo(bot.entity.position) > 0.2 && Date.now() < deadline) {
+      throwIfAborted(signal);
+      await bot.lookAt(target.offset(0, 1.5, 0), true);
+      bot.setControlState('forward', true);
+      await sleep(50, signal);
+    }
+  } finally { bot.clearControlStates(); }
 }
 
 const PATH_ERRORS = {

@@ -16,9 +16,9 @@ function usableTool(bot, name) {
 }
 
 export function shouldPauseForSupplies(bot, state, goal, essentialStep = false) {
-  if (['food', 'eat', 'recover', 'supply_wait', 'defend'].includes(goal)) return false;
+  if (['food', 'eat', 'recover', 'supply_wait', 'defend', 'escape'].includes(goal)) return false;
   const assessment = assessSupplies(bot, state, state.supplies?.activeTask || {});
-  if (essentialStep) return assessment.needsMeal && assessment.mealAvailable || bot.food < supplySettings(bot).interruptBelow;
+  if (essentialStep || goal === 'night') return assessment.needsMeal && assessment.mealAvailable || bot.food < supplySettings(bot).interruptBelow;
   return assessment.interrupt;
 }
 

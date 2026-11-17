@@ -2,8 +2,30 @@ import { Vec3 } from 'vec3';
 import pathfinderPkg from 'mineflayer-pathfinder';
 import { goTo, sleep, useMovementProfile, throwIfAborted } from '../actions/helpers.js';
 import { listHouseProjects } from '../building/projects.js';
+import { placeBlockAt } from '../autonomy/skills/build.js';
+import { placeBlockNear } from '../autonomy/skills/world.js';
 
 const { goals } = pathfinderPkg;
+
+export class GoalSurface extends goals.Goal {
+  constructor(bot, height) { super(); this.bot = bot; this.height = height; }
+  heuristic(node) { return Math.max(0, this.height - node.y); }
+  isEnd(node) {
+    const position = new Vec3(node.x, node.y, node.z);
+    const block = this.bot.blockAt(position);
+    return block?.skyLight > 0 && ['air', 'short_grass', 'fern', 'tall_grass'].includes(block.name)
+      && this.bot.blockAt(position.offset(0, -1, 0))?.boundingBox === 'block'
+      && this.bot.blockAt(position.offset(0, 1, 0))?.boundingBox === 'empty';
+  }
+}
+
+export async function reachSurface(ctx, height) {
+  const { bot, signal } = ctx;
+  if (height - bot.entity.position.y <= 8 || bot.blockAt(bot.entity.position.floored())?.skyLight !== 0) return;
+  ctx.log('先沿可施工路径返回地表，再前往设施');
+  useMovementProfile(bot, 'free');
+  await goTo(bot, new GoalSurface(bot, height), { signal, timeoutMs: 60000 });
+}
 
 // pathfinder 会把门板顶面当成站立点；穿过已确认的自有入口时改用短距离直走。
 async function passDoor(ctx, door, destination) {
@@ -48,7 +70,10 @@ export async function reachHome(ctx, home) {
   const inside = new Vec3(home.x, home.y, home.z);
   const door = home.door ? new Vec3(home.door.x, home.door.y, home.door.z) : null;
   if (door && bot.entity.position.distanceTo(inside) > 1.5) {
-    await goTo(bot, new goals.GoalNear(door.x, door.y, door.z, 2), { signal, timeoutMs: 60000 });
+    const inward = inside.minus(door);
+    const outside = Math.abs(inward.x) > Math.abs(inward.z)
+      ? door.offset(-Math.sign(inward.x) * 2, 0, 0) : door.offset(0, 0, -Math.sign(inward.z) * 2);
+    await goTo(bot, new goals.GoalBlock(outside.x, outside.y, outside.z), { signal, timeoutMs: 60000 });
     const block = bot.blockAt(door);
     if (!block?.name.endsWith('_door') || block.name.startsWith('iron_')) throw new Error('住所入口已经改变，暂不能确认可进入');
     if (!block.getProperties().open) {
@@ -87,6 +112,7 @@ export async function leaveHome(ctx, home) {
   const dx = home.x - door.x;
   const dz = home.z - door.z;
   const outside = Math.abs(dx) > Math.abs(dz) ? door.offset(-Math.sign(dx) * 2, 0, 0) : door.offset(0, 0, -Math.sign(dz) * 2);
+  await repairEntrance(ctx, door, outside);
   const floor = ctx.bot.blockAt(outside.offset(0, -1, 0));
   if (floor?.boundingBox !== 'block' || ctx.bot.blockAt(outside)?.boundingBox !== 'empty'
     || ctx.bot.blockAt(outside.offset(0, 1, 0))?.boundingBox !== 'empty'
@@ -106,5 +132,44 @@ export async function leaveHome(ctx, home) {
       await ctx.bot.activateBlock(block).catch(() => {});
     }
     if (!ctx.signal.aborted && previousMovements) ctx.bot.pathfinder.setMovements(previousMovements);
+  }
+}
+
+// 仅修复档案入口的两格外侧地面和木门，材料全部来自现有背包。
+async function repairEntrance(ctx, door, outside) {
+  const { bot, signal } = ctx;
+  const direction = outside.minus(door).scaled(0.5);
+  const floors = [door, door.plus(direction), outside].map((p) => p.offset(0, -1, 0));
+  for (const position of floors) {
+    const block = bot.blockAt(position);
+    if (block?.boundingBox === 'block') continue;
+    if (!block || !['air', 'cave_air'].includes(block.name)
+      || bot.blockAt(position.offset(0, -1, 0))?.boundingBox !== 'block') throw new Error('入口地基损坏，无法在已确认支撑上修补');
+    await craftCarried('oak_planks');
+    const material = bot.inventory.items().find((item) => ['cobblestone', 'dirt', 'oak_planks'].includes(item.name));
+    if (!material) throw new Error('缺少修复入口地面的随身材料');
+    await placeBlockAt(ctx, position, material.name);
+    ctx.log?.('已修补自有入口地面');
+  }
+  const entrance = bot.blockAt(door);
+  if (!entrance || entrance.name.endsWith('_door')) return;
+  if (!['air', 'cave_air'].includes(entrance.name)
+    || !['air', 'cave_air'].includes(bot.blockAt(door.offset(0, 1, 0))?.name)) throw new Error('入口被其他方块占据，无法恢复木门');
+  for (let i = 0; i < 2; i++) await craftCarried('oak_planks');
+  if (!bot.inventory.items().some((item) => item.name === 'oak_door')) {
+    let table = bot.findBlock({ matching: bot.registry.blocksByName.crafting_table.id, maxDistance: 3 });
+    if (!table) {
+      await craftCarried('crafting_table');
+      table = await placeBlockNear(ctx, 'crafting_table');
+    }
+    await craftCarried('oak_door', table);
+  }
+  await placeBlockAt(ctx, door, 'oak_door', { allowDoor: true });
+  ctx.log?.('已恢复自有入口木门');
+
+  async function craftCarried(name, table = null) {
+    throwIfAborted(signal);
+    const recipe = bot.recipesFor(bot.registry.itemsByName[name].id, null, 1, table)[0];
+    if (recipe) await bot.craft(recipe, 1, table);
   }
 }

@@ -3,6 +3,8 @@ import mineflayer from 'mineflayer';
 import {readFile,writeFile,appendFile} from 'node:fs/promises';
 import {createActionRegistry} from '../src/actions/index.js';
 import {config} from '../src/config.js';
+import {monitorEventLoopDelay} from 'node:perf_hooks';
+const loopDelay=monitorEventLoopDelay({resolution:20});loopDelay.enable();
 const statusFile=new URL('../reports/survival-status.json',import.meta.url);
 const eventsFile=new URL('../reports/survival-events.jsonl',import.meta.url);
 let status;
@@ -18,6 +20,8 @@ async function sample(){
  lastSample={time,age};
  const inventory=bot.inventory.items().map(i=>({name:i.name,count:i.count}));
  const state=bot.strategySupervisor?.state;
+ status.eventLoopDelayMaxMs=Math.round(loopDelay.max/1e6);loopDelay.reset();
+ status.equipment=[5,6,7,8,45].map(slot=>({slot,name:bot.inventory.slots[slot]?.name??null}));
  status={...status,lastObservedAt:new Date().toISOString(),elapsedGameDays:Math.floor(status.observedCalendarTicks/24000),activeGameDays:status.activeTicks/24000,worldDay:bot.time.day,worldTime:time,worldAge:age,health:bot.health,food:bot.food,position:bot.entity.position,inventory,task:actions.tasks.describe(),home:state?.home,house:state?.house,farm:state?.farm?{width:state.farm.width,depth:state.farm.depth,status:state.farm.status,lastInspection:state.farm.lastInspection,harvestCycles:state.farm.harvestCycles}:null,storage:state?.storage?{mode:state.storage.mode,capacity:state.storage.capacity,chests:state.storage.chests.length,status:state.storage.status}:null,pastures:state?.pastures?.map(p=>({species:p.species,status:p.status,animals:p.animals?.length})),failures:state?.failures,plannedShelter:state?.plannedShelter,danger:bot.strategySupervisor?.danger,lastFailure:state?.lastGoal};
  await writeFile(statusFile,JSON.stringify(status,null,2)+'\n');await event('HEARTBEAT',status);
  }finally{sampling=false;}
@@ -33,7 +37,7 @@ function connect(){
  bot.on('death',()=>{status.deaths++;event('DEATH',{position:bot.entity?.position,task:actions.tasks.describe()});});
  bot.once('spawn',async()=>{
   status.connections++;lastSample=null;bot.buildingServer='fabric-regression-25565';bot.farmOptions={...config.farm,maxWidth:15,maxDepth:15,autoExpand:true};bot.supplyOptions=config.supplies;bot.autonomyHouseModel='warehouse';actions.attach(bot);
-  await event('CONNECTED',{position:bot.entity.position,time:bot.time.time,age:bot.time.age});
+  await event('CONNECTED',{position:bot.entity.position,worldTime:bot.time.time,age:bot.time.age});
   await new Promise(r=>setTimeout(r,2000));if(stopping)return;
   await actions.run('start_autonomy',{}, {player:'zz',isWhisper:true});await sample();heartbeat=setInterval(()=>sample().catch(e=>event('SAMPLE_ERROR',{message:e.message})),10000);
  });

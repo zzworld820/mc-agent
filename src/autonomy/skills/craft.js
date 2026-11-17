@@ -1,11 +1,8 @@
 // 合成技能：挑最省事的配方 → 把材料备齐（缺什么交给规划器去弄）→ 需要的话放个工作台 → 合成。
-import pathfinderPkg from 'mineflayer-pathfinder';
-import { countItem, craftVerified, goTo } from '../../actions/helpers.js';
+import { countItem, craftVerified } from '../../actions/helpers.js';
 import { INGREDIENT_COST, MINING, MOB_DROPS, SMELTING } from '../knowledge.js';
-import { placeBlockNear } from './world.js';
-import { reachHome } from '../../strategy/navigation.js';
+import { ensureWorkstation } from './workstation.js';
 
-const { goals } = pathfinderPkg;
 
 /**
  * 合成到背包里有 count 个 itemName 为止。缺的材料调用 ctx.obtain() 递归去弄。
@@ -50,21 +47,7 @@ export async function craftItem(ctx, itemName, count) {
 
 /** 附近（24 格内）有工作台就走过去用，没有就弄一个放下 */
 export async function ensureCraftingTable(ctx) {
-  const { bot, signal } = ctx;
-  const tableId = bot.registry.blocksByName.crafting_table.id;
-  const existing = bot.findBlock({ matching: tableId, maxDistance: 24 });
-  if (existing) {
-    const home = ctx.state.home;
-    if (home && home.dimension === String(bot.game.dimension)
-      && existing.position.distanceTo(home) < 5) await reachHome(ctx, home);
-    if (existing.position.distanceTo(bot.entity.position) > 3.5) {
-      const { x, y, z } = existing.position;
-      await goTo(bot, new goals.GoalNear(x, y, z, 2), { signal, timeoutMs: 30000 });
-    }
-    return bot.blockAt(existing.position);
-  }
-  await ctx.obtain('crafting_table', 1);
-  return placeBlockNear(ctx, 'crafting_table');
+  return ensureWorkstation(ctx, 'crafting_table');
 }
 
 /** 一个配方做 times 次需要的材料：Map<物品名, 数量> */
