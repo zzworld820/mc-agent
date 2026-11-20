@@ -30,7 +30,7 @@ const batchOf = (item) => (item.endsWith('_log') ? MIN_BATCH.log : MIN_BATCH[ite
 export async function obtain(ctx, item, count) {
   const { bot } = ctx;
   throwIfAborted(ctx.signal);
-  if (ownedCount(bot, item) >= count) return;
+  if (ownedCount(bot, item) >= count && !(item.endsWith('_log') && ctx.state.wholeTree)) return;
   if (ctx.depth >= MAX_DEPTH) throw new Error(`规划太深了（${item}），可能有循环依赖`);
 
   ctx.depth += 1;

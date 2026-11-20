@@ -18,6 +18,7 @@ function usableTool(bot, name) {
 export function shouldPauseForSupplies(bot, state, goal, essentialStep = false) {
   if (['food', 'eat', 'recover', 'supply_wait', 'defend', 'escape'].includes(goal)) return false;
   const assessment = assessSupplies(bot, state, state.supplies?.activeTask || {});
+  if (state.supplies?.activeTask?.constructionHome) return assessment.interrupt;
   if (essentialStep || goal === 'night') return assessment.needsMeal && assessment.mealAvailable || bot.food < supplySettings(bot).interruptBelow;
   return assessment.interrupt;
 }
@@ -54,7 +55,7 @@ export function assessSupplies(bot, state, task = {}) {
 
 // 仓储和丢弃物资共用的随身预算；数量由当前任务决定，不给每种食物各留一大堆。
 export function foodReservations(bot, state, task = state.supplies?.activeTask || {}) {
-  const target = taskBudget(bot, task).foodTarget + Math.max(0, 20 - bot.food);
+  const target = Math.max(supplySettings(bot).localMinimum, taskBudget(bot, task).foodTarget) + Math.max(0, 20 - bot.food);
   let remaining = target;
   const reserves = {};
   const names = [...new Set(bot.inventory.items().map((item) => item.name))]

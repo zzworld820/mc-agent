@@ -1,5 +1,5 @@
 // 食物与打猎：打动物拿生肉 → 烧成熟肉，直到背包里的食物够吃。
-import { countItem, throwIfAborted } from '../../actions/helpers.js';
+import { countItem, throwIfAborted, useMovementProfile } from '../../actions/helpers.js';
 import { MEAT } from '../knowledge.js';
 import { smelt } from './smelt.js';
 import { attackUntilDead, collectDrops, explore } from './world.js';
@@ -14,10 +14,15 @@ export function foodPoints(bot, state = null) {
 /** 打猎 + 烤肉，直到食物够 minPoints 点饱食度 */
 export async function ensureFood(ctx, minPoints, { maxExplore = 8, exploreDistance = 48 } = {}) {
   const { bot, signal } = ctx;
+  ctx.state.supplies ??= {};
+  const failures = ctx.state.supplies.huntFailures ??= {};
+  const sourceKey = (entity) => entity.uuid || `${String(bot.game.dimension)}/${entity.name}/${entity.position.floored()}`;
+  for (const [key, failure] of Object.entries(failures)) if (failure.retryAt <= Date.now()) delete failures[key];
   let explores = 0;
   while (foodPoints(bot, ctx.state) < minPoints) {
     throwIfAborted(signal);
     await ctx.rest?.();
+    useMovementProfile(bot, bot.autonomyOptions?.allowDig === false ? 'safe' : 'free');
 
     // 先把背包里的生肉烤了
     const raw = Object.values(MEAT).find(({ raw }) => countItem(bot, raw) > 0);
@@ -28,6 +33,7 @@ export async function ensureFood(ctx, minPoints, { maxExplore = 8, exploreDistan
 
     if (bot.autonomyOptions?.allowCombat === false) throw new Error('战斗已关闭，暂缺足够的非战斗食物来源');
     const animal = bot.nearestEntity((entity) => Object.keys(MEAT).includes(entity.name)
+      && !failures[sourceKey(entity)]
       && entity.position.distanceTo(bot.entity.position) <= 64
       && !Object.values(bot.entities).some((enemy) => isFightable(enemy) && enemy.position.distanceTo(entity.position) < 16)
       && !(ctx.state.pastures ?? []).some((pasture) => {
@@ -48,7 +54,16 @@ export async function ensureFood(ctx, minPoints, { maxExplore = 8, exploreDistan
     }
 
     ctx.log(`打猎：${animal.name}`);
-    const where = await attackUntilDead(ctx, animal);
-    await collectDrops(ctx, where, 5);
+    try {
+      const where = await attackUntilDead(ctx, animal);
+      await collectDrops(ctx, where, 5);
+      delete failures[sourceKey(animal)];
+    } catch (error) {
+      throwIfAborted(signal);
+      failures[sourceKey(animal)] = { reason: error.message, retryAt: Date.now() + 300000 };
+      await ctx.checkpoint?.();
+      ctx.log(`该动物暂时无法安全取得，五分钟内换其他来源：${error.message}`);
+      if (Object.keys(failures).length >= 3) throw new Error('已有三个打猎来源不可达，暂缓打猎并复查仓储和农田');
+    }
   }
 }

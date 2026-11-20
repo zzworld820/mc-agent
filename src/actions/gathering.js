@@ -10,6 +10,7 @@
 //   5. 可以用 .env 的 NPC_ALLOW_DIG=false 整个关掉
 import pathfinderPkg from 'mineflayer-pathfinder';
 import { createLogger } from '../logger.js';
+import { harvestWholeTree, protectedTarget } from '../autonomy/skills/trees.js';
 import {
   describeGain,
   formatPosition,
@@ -19,6 +20,7 @@ import {
   resolveBlockNames,
   sleep,
   throwIfAborted,
+  useMovementProfile,
 } from './helpers.js';
 
 const { goals } = pathfinderPkg;
@@ -71,12 +73,13 @@ export const gatheringActions = [
     description:
       '挖/砍某种天然方块并捡起掉落物，比如砍树拿木头、挖泥土、挖石头、挖矿。只有玩家明确要你去挖的时候才用。' +
       'block 用 Minecraft 英文 ID（oak_log、dirt、stone、iron_ore），也可以写 log 表示任意原木。' +
+      '原木按整棵树采伐，数量作为最低需求，实际可能超出；无法安全完整处理的树会跳过。' +
       '只能挖天然方块；木板、圆石、玻璃等建材不能挖。后台执行，挖完会收到任务结果（包括背包新增了什么）。',
     parameters: {
       type: 'object',
       properties: {
         block: { type: 'string', description: '方块的 Minecraft 英文 ID' },
-        count: { type: 'number', description: '要挖几个方块，默认 4，最多 64' },
+        count: { type: 'number', description: '需求方块数，默认4，最多64；采木时完成当前整棵树，实际数量可能更多' },
       },
       required: ['block'],
     },
@@ -128,12 +131,36 @@ export const gatheringActions = [
 ];
 
 /** 挖方块的主循环：找最近的 → 走过去 → 换工具 → 挖 → 捡掉落物，直到够数 */
-async function collect(bot, names, target, { signal, setProgress, checkpoint = {}, saveCheckpoint }) {
+async function collect(bot, names, target, { signal, setProgress, checkpoint = {}, saveCheckpoint, survivalState }) {
   const ids = names.map((name) => bot.registry.blocksByName[name].id);
   checkpoint.before ??= inventorySnapshot(bot);
   const before = checkpoint.before;
   let dug = checkpoint.dug || 0;
   let failures = 0;
+
+  if (names.every(isLog)) {
+    const treeState = survivalState || checkpoint;
+    const treeContext = { bot, state: treeState, signal, checkpoint: saveCheckpoint, log: setProgress };
+    while (dug < target || treeState.wholeTree) {
+      throwIfAborted(signal);
+      useMovementProfile(bot, 'safe');
+      await harvestWholeTree(treeContext, names, {
+        allowed: (position) => !protectedTarget(treeState, position),
+        dig: (block) => {
+          useMovementProfile(bot, 'safe');
+          return digOne(bot, block, signal);
+        },
+        pickUp: (position) => pickUpDrops(bot, position, PICKUP_RADIUS, signal),
+        onDug: async () => {
+          dug++;
+          checkpoint.dug = dug;
+          await saveCheckpoint?.();
+          setProgress(`整树采伐，已砍 ${dug} 块，需求 ${target} 块`);
+        },
+      });
+    }
+    return `整树采伐完成，砍下 ${dug} 块原木。背包新增：${describeGain(before, inventorySnapshot(bot)) || '暂无可达掉落物'}`;
+  }
 
   setProgress(`0/${target}`);
   while (dug < target) {

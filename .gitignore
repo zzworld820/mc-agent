@@ -1,5 +1,7 @@
 node_modules/
 .env
+data/web/
+dist/
 *.log
 .DS_Store
 # microsoft 正版登录缓存
@@ -7,3 +9,6 @@ nmp-cache/
 
 # 本地 Paper 测试服（npm run test-server 自动下载和生成）
 local-server/
+
+# Local per-agent connection profiles
+agents.local.json

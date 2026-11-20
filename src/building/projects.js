@@ -1,10 +1,20 @@
 // 工程坐标和模型快照独立于对话记忆，重启后仍能定位扩建接口。
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { planHouseShell } from './models.js';
 
 const DIRECTORY = new URL('../../data/building/', import.meta.url);
 const FILE = new URL('projects.json', DIRECTORY);
 let pending = Promise.resolve();
+
+// 模型快照保留最终设计，临时封闭材料单独记录，续建和入住检查读取同一份计划。
+export function projectShellPlan(project) {
+  const target = planHouseShell(project.model, project.model.size);
+  const model = { ...project.model, palette: { ...project.model.palette, ...project.construction?.palette } };
+  return planHouseShell(model, model.size).map((entry, index) => ({
+    ...entry, acceptedItems: [...new Set([entry.item, target[index].item])], targetItem: target[index].item,
+  }));
+}
 
 export function buildingWorldKey(bot) {
   if (bot.memory?.worldId) {
@@ -84,6 +94,7 @@ export async function saveHouseProject(project, memory) {
 export function createHouseProject(bot, model, origin) {
   return {
     id: randomUUID(), world: buildingWorldKey(bot), model: structuredClone(model),
+    ...(bot.portfolioAgentId ? { ownerAgent: bot.portfolioAgentId } : {}),
     origin: { x: origin.x, y: origin.y, z: origin.z }, status: 'building', extensions: [],
   };
 }

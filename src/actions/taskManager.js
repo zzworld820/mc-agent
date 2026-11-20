@@ -29,6 +29,7 @@ export function createTaskManager({ onCancel, onStart, onSettled, execute = (tas
   let pending = Promise.resolve();
   let nextId = 1;
   const listeners = new Set();
+  const settledListeners = new Set();
 
   /**
    * 开始一个后台任务。
@@ -41,12 +42,13 @@ export function createTaskManager({ onCancel, onStart, onSettled, execute = (tas
    * @param {(ctx: { signal: AbortSignal, setProgress: (text: string) => void }) => Promise<string>} work
    *   真正干活的函数：必须经常检查 signal（被取消时尽快停），返回一句结果文字
    */
-  function start({ label, kind = 'work', owner = null, isWhisper = false, report = 'always', supply = null }, work) {
+  function start({ label, kind = 'work', owner = null, isWhisper = false, report = 'always', supply = null,
+    missionId = null, source = 'game' }, work) {
     if (!REPORT_MODES.has(report)) throw new Error(`未知的 report 模式：${report}`);
     cancel(`被新任务「${label}」替换`);
 
     const controller = new AbortController();
-    const task = { id: nextId++, label, kind, owner, isWhisper, report, supply, controller, progress: '' };
+    const task = { id: nextId++, label, kind, owner, isWhisper, report, supply, missionId, source, controller, progress: '' };
     current = task;
     log.info(`开始任务 #${task.id}：${label}`);
     try { onStart?.(task); } catch { log.warn('任务开始记录失败，任务继续执行'); }
@@ -59,7 +61,7 @@ export function createTaskManager({ onCancel, onStart, onSettled, execute = (tas
     // 取消是异步清理：等待旧任务真正退出后才交出手、寻路器和容器，避免补给与新任务并发。
     const operation = pending.catch(() => {}).then(() => {
       if (controller.signal.aborted) throw new Error('任务在开始前已取消');
-      return execute({ signal: controller.signal, setProgress, supply, kind, label }, work);
+      return execute({ signal: controller.signal, setProgress, setStage: stage => { task.stage = stage; }, supply, kind, label }, work);
     });
     task.settled = operation
       .then(
@@ -76,6 +78,10 @@ export function createTaskManager({ onCancel, onStart, onSettled, execute = (tas
     const aborted = task.controller.signal.aborted;
     log.info(`任务 #${task.id} ${aborted ? '已取消' : outcome.ok ? '完成' : '失败'}：${outcome.result}`);
     try { onSettled?.(task, outcome); } catch { log.warn('任务结果记录失败'); }
+    for (const listener of settledListeners) {
+      try { listener({ task, ...outcome, aborted }); }
+      catch (error) { log.error('任务结束监听器出错：', error.message); }
+    }
 
     // 被取消的任务不报告：取消它的人（stop 或新任务）已经知道了
     if (aborted) return;
@@ -120,6 +126,10 @@ export function createTaskManager({ onCancel, onStart, onSettled, execute = (tas
     onFinish(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
+    },
+    onSettled(listener) {
+      settledListeners.add(listener);
+      return () => settledListeners.delete(listener);
     },
   };
 }

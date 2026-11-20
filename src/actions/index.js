@@ -89,13 +89,16 @@ export function createActionRegistry(options) {
     },
   });
 
-  async function runAction(name, args, { player, isWhisper }, supplyResume = null) {
+  async function runAction(name, args, { player, isWhisper, missionId = null, source = 'game' }, supplyResume = null) {
     const action = actions.find((item) => item.name === name);
     if (!action) return `没有叫 ${name} 的动作`;
     if (!bot?.entity) return '我还没进入世界，做不了';
     try {
-      return await action.run({ bot, tasks, player, isWhisper, options, supplyResume,
-        runAction: (nextName, nextArgs, resumePosition) => runAction(nextName, nextArgs, { player, isWhisper }, resumePosition) }, args ?? {});
+      const scopedTasks = missionId ? Object.create(tasks) : tasks;
+      if (missionId) scopedTasks.start = (info, work) => tasks.start({ ...info, missionId, source }, work);
+      const context = { player, isWhisper, missionId, source };
+      return await action.run({ bot, tasks: scopedTasks, ...context, options, supplyResume,
+        runAction: (nextName, nextArgs, resumePosition) => runAction(nextName, nextArgs, context, resumePosition) }, args ?? {});
     } catch (err) {
       return `执行失败：${err.message}`;
     }

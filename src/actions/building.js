@@ -6,10 +6,10 @@ import { listHouseModels } from '../building/models.js';
 import { listHouseProjects } from '../building/projects.js';
 
 // 新建造任务等待被取消的旧建造任务退出，避免同一工程被两个任务交错写入。
-let pendingBuild = Promise.resolve();
+const pendingBuild = new WeakMap();
 
 function runBuildingTask(bot, task, work) {
-  const operation = pendingBuild.then(async () => {
+  const operation = (pendingBuild.get(bot) || Promise.resolve()).then(async () => {
     throwIfAborted(task.signal);
     useMovementProfile(bot, 'free');
     try {
@@ -18,7 +18,7 @@ function runBuildingTask(bot, task, work) {
       useMovementProfile(bot, 'safe');
     }
   });
-  pendingBuild = operation.catch(() => {});
+  pendingBuild.set(bot, operation.catch(() => {}));
   return operation;
 }
 
@@ -116,7 +116,10 @@ export const buildingActions = [
 ];
 
 function makeBuildContext(bot, task) {
-  if (task.supplyContext) return task.supplyContext;
+  if (task.supplyContext) {
+    task.supplyContext.stage = task.setStage;
+    return task.supplyContext;
+  }
   const state = { unreachable: new Map(), stage: '建造' };
   const setProgress = task.setProgress ?? (() => {});
   const ctx = {
@@ -124,6 +127,7 @@ function makeBuildContext(bot, task) {
     signal: task.signal,
     state,
     depth: 0,
+    stage: task.setStage,
     log(text) {
       setProgress(text);
     },

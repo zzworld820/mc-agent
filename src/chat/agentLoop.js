@@ -18,6 +18,7 @@
 // chatHandler 会把“任务结果”作为一条新消息再跑一次这个循环，大模型就能接着做下一步。
 import { createLogger } from '../logger.js';
 import { chatCompletion } from './llm.js';
+import { throwIfAborted } from '../actions/helpers.js';
 
 const log = createLogger('agent');
 
@@ -46,7 +47,9 @@ export async function runAgentLoop({ llm, actions, messages, context }) {
   let nudged = false;
 
   for (let round = 1; round <= MAX_ROUNDS; round++) {
-    const answer = await chatCompletion(llm, conversation, actions.toolDefinitions);
+    throwIfAborted(context.signal);
+    const answer = await chatCompletion(llm, conversation, actions.toolDefinitions, context.signal);
+    throwIfAborted(context.signal);
 
     // 没要求调用工具 = 想好了，直接回复
     if (answer.toolCalls.length === 0) {
@@ -67,6 +70,7 @@ export async function runAgentLoop({ llm, actions, messages, context }) {
 
     // ……再逐个执行，每个结果用 role: 'tool' + 对应的 tool_call_id 告诉它
     for (const call of answer.toolCalls) {
+      throwIfAborted(context.signal);
       const name = call.function.name;
       const args = parseArguments(call.function.arguments);
       const result = await actions.run(name, args, context);

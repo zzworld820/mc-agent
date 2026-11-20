@@ -141,7 +141,7 @@ test('DANGER uses collision shapes to see through an open doorway', async () => 
   b.world.raycast = () => ({ name: 'stone' });
   assert.equal(readDanger(b).threats.length, 1);
 });
-test('STRATEGY restores stone tools before inspecting an unfinished farm', async () => {
+test('STRATEGY equips the early camp before inspecting an unfinished farm', async () => {
   const { nextGoal } = await import('../src/strategy/index.js');
   const b = dangerBot();
   b.time = { timeOfDay: 1000 };
@@ -149,7 +149,7 @@ test('STRATEGY restores stone tools before inspecting an unfinished farm', async
   const s = state();
   s.home = { x: 0, y: 65, z: 0, dimension: 'overworld' };
   s.farm = { status: 'building' };
-  assert.equal(nextGoal(b, s), 'tools');
+  assert.equal(nextGoal(b, s), 'camp');
 });
 test('NAV safe walking uses supported cardinal routes through corners', async () => {
   const { createRequire } = await import('node:module');
@@ -224,7 +224,7 @@ test('DANGER checks a nearby creeper even without direct sight', async () => {
   b.world = { raycast: () => ({ name: 'birch_leaves' }) };
   assert.equal(readDanger(b).retreat, true);
 });
-test('STRATEGY prepares protection before optional construction', async () => {
+test('STRATEGY prepares the camp before iron protection', async () => {
   const { nextGoal } = await import('../src/strategy/index.js');
   const b = dangerBot();
   b.time = { timeOfDay: 1000 };
@@ -232,9 +232,9 @@ test('STRATEGY prepares protection before optional construction', async () => {
   const s = state();
   s.home = { x: 0, y: 65, z: 0, dimension: 'overworld' };
   s.workshop = { x: 0, y: 65, z: 0 };
-  assert.equal(nextGoal(b, s), 'protection');
+  assert.equal(nextGoal(b, s), 'camp');
 });
-test('STRATEGY can prepare protection in a lit underground shelter at night', async () => {
+test('STRATEGY stays sheltered at night even with underground lighting', async () => {
   const { nextGoal } = await import('../src/strategy/index.js');
   const b = dangerBot();
   b.entity.position.y = 45;
@@ -244,7 +244,7 @@ test('STRATEGY can prepare protection in a lit underground shelter at night', as
   const s = state();
   s.home = { x: 0, y: 80, z: 0, dimension: 'overworld' };
   s.workshop = { x: 0, y: 80, z: 0 };
-  assert.equal(nextGoal(b, s), 'protection');
+  assert.equal(nextGoal(b, s), 'night');
 });
 test('BUILD searches verified ground surfaces at different elevations', async () => {
   const { findHouseSite } = await import('../src/autonomy/skills/build.js');
@@ -309,6 +309,8 @@ for (const name of ['crafting_table', 'furnace']) {
     b.blockAt = (position) => ({ position, name: placed.get(position.toString()) || (position.y < 65 ? 'stone' : 'air'), boundingBox: position.y < 65 ? 'block' : 'empty' });
     b.equip = async () => {};
     b.lookAt = async () => {};
+    b.controlState = {};
+    b.setControlState = (name, value) => { b.controlState[name] = value; };
     b.placeBlock = async (reference, face) => { placed.set(reference.position.plus(face).toString(), name); items.length = 0; };
     const s = state();
     s.unreachable = new Map();
@@ -330,4 +332,33 @@ test('BUILD async site scanning promptly observes cancellation', async () => {
   };
   await assert.rejects(findHouseSiteAsync(b, { width: 9, depth: 9, wallHeight: 3 }, { emptyOnly: true }, controller.signal), { name: 'AbortError' });
   assert.ok(reads <= 200);
+});
+
+
+test('STRATEGY night emergency hunger with empty inventory stays sheltered', async () => {
+  const { nextGoal } = await import('../src/strategy/index.js');
+  const b = dangerBot();
+  b.time = { timeOfDay: 15000 };
+  b.food = 5;
+  assert.equal(nextGoal(b, state()), 'night');
+});
+
+test('STRATEGY dusk interrupts ordinary development before sunset', async () => {
+  const { nextGoal } = await import('../src/strategy/index.js');
+  const b = dangerBot();
+  b.time = { timeOfDay: 10500 };
+  assert.equal(nextGoal(b, state()), 'night');
+});
+
+test('STRATEGY a placed chest does not skip unfinished camp admission', async () => {
+  const { nextGoal } = await import('../src/strategy/index.js');
+  const b = dangerBot();
+  b.time = { timeOfDay: 1000 };
+  b.inventory.items = () => [{ name: 'bread', count: 4 }, { name: 'wooden_pickaxe', count: 1 }];
+  const s = state();
+  s.home = { x: 0, y: 65, z: 0, dimension: 'overworld', kind: 'cave' };
+  s.storage = { earlyCamp: true, status: 'ready' };
+  assert.equal(nextGoal(b, s), 'camp');
+  s.home.campReady = true;
+  assert.equal(nextGoal(b, s), 'tools');
 });

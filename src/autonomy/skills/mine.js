@@ -4,15 +4,18 @@
 // 所以 bot.findBlocks 能直接搜到 64 格内的铁矿、钻石——相当于“透视”。真人玩家得靠挖矿道碰运气，
 // 机器人可以直接挖一条路过去。
 import pathfinderPkg from 'mineflayer-pathfinder';
-import { digWithTimeout, goTo, throwIfAborted } from '../../actions/helpers.js';
+import { digWithTimeout, goTo, throwIfAborted, useMovementProfile } from '../../actions/helpers.js';
 import { collectDrops, explore, tidyInventory } from './world.js';
 import { isNaturalTree } from '../../actions/gathering.js';
+import { PICKAXE_TIERS } from '../knowledge.js';
 import { leaveHome } from '../../strategy/navigation.js';
+import { harvestWholeTree, isTreeLog, protectedTarget } from './trees.js';
 
 const { goals } = pathfinderPkg;
 
 const UNREACHABLE_MS = 5 * 60 * 1000;
-const MAX_FAILURES_BEFORE_EXPLORE = 6;
+// 连续多个矿点都走不通时尽快换区域，避免在同一处反复站桩数分钟。
+const MAX_FAILURES_BEFORE_EXPLORE = 3;
 
 /**
  * 一直挖 blockNames 里的方块，直到 isDone() 返回 true。
@@ -29,12 +32,34 @@ export async function mineUntil(ctx, blockNames, isDone, { searchDistance = 64, 
 
   let explores = 0;
   let failures = 0;
-  while (!isDone()) {
+  const trees = blockNames.every(isTreeLog);
+  while (!isDone() || trees && ctx.state.wholeTree) {
     throwIfAborted(signal);
     await ctx.rest?.(); // 天黑了先睡觉
     await tidyInventory(ctx);
-    if (bot.inventory.emptySlotCount() === 0) throw new Error('背包满了');
+    if (!trees && bot.inventory.emptySlotCount() === 0) throw new Error('背包满了');
 
+    if (trees) {
+      const movementProfile = bot.autonomyOptions?.allowDig === false ? 'safe' : 'free';
+      useMovementProfile(bot, movementProfile);
+      try {
+        await harvestWholeTree(ctx, blockNames, {
+          searchDistance,
+          allowed: (position) => !protectedTarget(ctx.state, position),
+          dig: async (block) => {
+            useMovementProfile(bot, movementProfile);
+            await digBlock(ctx, block);
+          },
+          pickUp: (position) => collectDrops(ctx, position, 6),
+        });
+      } catch (error) {
+        if (signal.aborted || ctx.state.wholeTree || explores++ >= maxExplore) throw error;
+        ctx.log(`附近整树暂不可采：${error.message}，换一片区域检查`);
+        await explore(ctx, 24);
+      }
+      continue;
+    }
+    useMovementProfile(bot, 'free');
     const block = findTarget(ctx, ids, searchDistance);
     if (!block || failures >= MAX_FAILURES_BEFORE_EXPLORE) {
       if (explores >= maxExplore) throw new Error(`走了很远都没找到能挖的 ${blockNames[0]}`);
@@ -68,9 +93,17 @@ export async function digBlock(ctx, block) {
   await goTo(bot, goal, { signal, timeoutMs: 90000 });
   throwIfAborted(signal);
 
-  const current = bot.blockAt(block.position);
+  let current = bot.blockAt(block.position);
   if (!current || current.type !== block.type) return; // 已经没了（可能挖路时顺手挖掉了）
 
+  if (!bot.inventory.items().some((item) => current.canHarvest(item.type)) && !current.canHarvest(null)) {
+    const required = PICKAXE_TIERS.find((name) => current.canHarvest(bot.registry.itemsByName[name]?.id));
+    if (required && ctx.obtain) await ctx.obtain(required, 1);
+    useMovementProfile(bot, 'free');
+    await goTo(bot, goal, { signal, timeoutMs: 90000 });
+    current = bot.blockAt(block.position);
+    if (!current || current.type !== block.type) return;
+  }
   const tool = bot.pathfinder.bestHarvestTool(current);
   if (tool) await bot.equip(tool, 'hand');
   if (!current.canHarvest(bot.heldItem?.type ?? null)) {
@@ -96,23 +129,15 @@ function findTarget(ctx, ids, searchDistance) {
   const now = Date.now();
   for (const position of positions) {
     if ((state.unreachable.get(position.toString()) ?? 0) > now) continue;
-    const protectedPositions = [state.home, ...(state.farm?.plots ?? []).map((plot) => plot.position),
-      ...(state.farm?.waters ?? []).map((entry) => entry.position), ...(state.farm?.lamps ?? []).map((entry) => entry.soil),
-      ...(state.storage?.chests ?? []).map((entry) => entry.position)];
-    if (protectedPositions.some((p) => p && Math.abs(position.x - p.x) <= 4 && Math.abs(position.z - p.z) <= 4 && Math.abs(position.y - p.y) <= 5)) continue;
-    const rooms = [...(state.house?.rooms ?? []), ...Object.values(state.buildingRooms ?? {}).flat()];
-    if (rooms.some((room) => position.x >= room.origin.x - 1 && position.x <= room.origin.x + room.size.width
-      && position.z >= room.origin.z - 1 && position.z <= room.origin.z + room.size.depth && position.y >= room.origin.y - 1
-      && position.y <= room.origin.y + room.size.wallHeight + 2)) continue;
-    if ((state.pastures ?? []).some((pasture) => position.x >= pasture.origin.x - 1 && position.x <= pasture.origin.x + 5
-      && position.z >= pasture.origin.z - 1 && position.z <= pasture.origin.z + 5 && Math.abs(position.y - pasture.origin.y) <= 3)) continue;
-    if (nearLiquid(bot, position)) continue; // 挖开会让岩浆 / 水灌进来（测试时真的淹死过）
+    if (protectedTarget(state, position)) continue;
+    if (nearLiquid(bot, position)) continue;
     const candidate = bot.blockAt(position);
     if (candidate?.name.endsWith('_log') && !isNaturalTree(bot, position)) continue;
     return candidate;
   }
   return null;
 }
+
 
 function nearLiquid(bot, position) {
   for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {

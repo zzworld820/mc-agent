@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#142e52">
+  <title>方舟 · Agent 监控台</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到监控内容</a>
+  <svg class="icon-library" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><path d="m13 11 8-8m-5 0h5v5"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="m12 3 9 5v9l-9 5-9-5V8l9-5Zm0 10v9M3 8l9 5 9-5M7.5 5.5l9 5"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="M12 8v5m0 3h.01"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2V11.5a9.5 9.5 0 0 1 19 0Z"/><path d="M7 10h10M7 14h6"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z"/></symbol>
+    <symbol id="i-food" viewBox="0 0 24 24"><path d="M5 3v6a3 3 0 0 0 6 0V3M8 3v18M19 21V3c-4 2-4 9 0 10"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="13" rx="2"/><path d="m16 10 5-3v11l-5-3"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="m3 3 19 9-19 9 4-9-4-9Zm4 9h15"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 8a9 9 0 1 0 1 7M20 3v5h-5"/></symbol>
+  </svg>
+
+  <aside class="sidebar" aria-label="主导航">
+    <a class="brand" href="#overview" aria-label="方舟监控台首页"><span class="brand-mark">方</span><span>方舟<span class="brand-subtitle">运行监控</span></span></a>
+    <div class="workspace-label">工作空间 <span>本地世界</span></div>
+    <nav class="nav-list">
+      <a class="nav-link is-active" href="#overview"><svg class="icon"><use href="#i-grid"/></svg>运行概览<span class="nav-indicator"></span></a>
+      <a class="nav-link" href="#missions"><svg class="icon"><use href="#i-target"/></svg>任务与进度</a>
+      <a class="nav-link" href="#storage"><svg class="icon"><use href="#i-box"/></svg>背包与仓储</a>
+      <a class="nav-link" href="#safety"><svg class="icon"><use href="#i-shield"/></svg>危险与卡点<span id="nav-alert-count" class="nav-count" hidden>0</span></a>
+      <a class="nav-link" href="#conversation"><svg class="icon"><use href="#i-chat"/></svg>指令与对话</a>
+    </nav>
+    <div class="sidebar-bottom"><span class="avatar" id="agent-initial">A</span><div><strong id="sidebar-agent">等待 Agent</strong><span id="sidebar-world">尚未连接世界</span></div><span class="status-dot" id="sidebar-status"></span></div>
+  </aside>
+
+  <div class="workspace">
+    <header class="topbar"><div class="breadcrumb">工作空间 <span>/</span> <strong>运行概览</strong></div><div class="topbar-right"><label class="agent-select-label" for="agent-select">Agent</label><select id="agent-select" aria-label="切换 Agent" disabled><option>连接中</option></select><span id="stream-status" class="connection-pill" role="status"><span class="status-dot"></span><span id="stream-label">正在连接</span></span><span class="clock" id="current-time">--:--:--</span></div></header>
+    <main id="main">
+      <section id="overview" class="page-heading" aria-labelledby="page-title"><div><h1 id="page-title">Agent 运行状态</h1></div><div class="snapshot-meta"><span id="model-name" class="muted"></span><span id="snapshot-age">等待首次快照</span><button id="refresh-state" class="button button-outline button-small" type="button"><svg class="icon"><use href="#i-refresh"/></svg>刷新状态</button></div></section>
+      <div id="connection-banner" class="notice" role="status" hidden></div>
+
+      <section class="stats-grid" aria-label="Agent 状态">
+        <article class="stat-card"><div class="stat-heading"><span>连接状态</span><svg class="icon"><use href="#i-grid"/></svg></div><div class="stat-value" id="agent-connection">等待数据</div><div class="stat-caption"><span id="agent-name">Agent 未知</span><span id="dimension" class="tag">维度未知</span></div></article>
+        <article class="stat-card"><div class="stat-heading"><span>生命值</span><svg class="icon heart-icon"><use href="#i-heart"/></svg></div><div class="stat-value"><span id="health-value">未知</span><span class="stat-unit" id="health-unit"></span></div><div class="meter health-meter" role="progressbar" aria-label="生命值" aria-valuemin="0" aria-valuemax="20"><span id="health-bar"></span></div><span id="health-note" class="stat-caption">等待状态同步</span></article>
+        <article class="stat-card"><div class="stat-heading"><span>饥饿值</span><svg class="icon food-icon"><use href="#i-food"/></svg></div><div class="stat-value"><span id="food-value">未知</span><span class="stat-unit" id="food-unit"></span></div><div class="meter food-meter" role="progressbar" aria-label="饥饿值" aria-valuemin="0" aria-valuemax="20"><span id="food-bar"></span></div><span id="food-note" class="stat-caption">等待状态同步</span></article>
+        <article class="stat-card"><div class="stat-heading"><span>当前位置</span><svg class="icon"><use href="#i-pin"/></svg></div><div class="coordinates"><span>X <b id="position-x">—</b></span><span>Y <b id="position-y">—</b></span><span>Z <b id="position-z">—</b></span></div><div class="stat-caption" id="position-note">等待坐标同步</div></article>
+      </section>
+
+      <div class="dashboard-grid">
+        <div class="main-column">
+          <section id="missions" class="panel mission-panel" aria-labelledby="missions-title">
+            <div class="panel-heading"><div><h2 id="missions-title">任务控制台</h2></div><span id="task-status" class="tag">等待同步</span></div>
+            <article class="primary-mission"><div class="mission-topline"><span class="mission-label"><span class="small-square"></span>主任务</span><span id="primary-status" class="tag tag-blue">状态未知</span></div><h3 id="primary-label">等待主任务</h3><p id="primary-detail" class="muted">连接后显示已保存的主任务与恢复状态。</p><div class="progress-line"><span id="task-label">当前执行：未知</span><strong id="task-percent">进度未知</strong></div><div class="meter task-meter" role="progressbar" aria-label="任务进度" aria-valuemin="0" aria-valuemax="100"><span id="task-bar"></span></div><div class="primary-footer"><span id="primary-preservation" class="preservation-note">保存 / 恢复状态未知</span><div class="button-group"><button id="pause-primary" class="button button-outline button-small" type="button" disabled><svg class="icon"><use href="#i-pause"/></svg>暂停主任务</button><button id="resume-primary" class="button button-primary button-small" type="button" disabled>恢复主任务<svg class="icon"><use href="#i-arrow"/></svg></button></div></div></article>
+            <div class="temporary-heading"><h3>临时任务 <span id="temporary-count" class="count">—</span></h3><span class="muted">结束后自动恢复主任务</span></div><div id="temporary-list" class="temporary-list"><p class="empty-state">等待临时任务数据</p></div>
+            <details class="mission-settings"><summary>队列与执行优先级 <span id="queue-count" class="muted">等待同步</span></summary><div id="queue-list" class="queue-list"></div><form id="priorities-form" class="priorities-form"><label>临时任务<input id="temporary-priority" type="number" min="0" max="100" step="1" value="80" required></label><label>主任务<input id="primary-priority" type="number" min="0" max="100" step="1" value="50" required></label><button id="save-priorities" class="button button-outline button-small" type="submit" disabled>保存优先级</button><p id="priority-note" class="muted">当前值未知；默认临时 80 / 主任务 50，数值越大越优先。</p></form></details>
+          </section>
+
+          <section class="panel" aria-labelledby="progress-title"><div class="panel-heading"><div><h2 id="progress-title">目标推进</h2></div><span id="stage-label" class="tag">阶段未知</span></div><div class="next-step"><span class="step-arrow">↗</span><div><span class="eyebrow">下一步</span><p id="next-step">等待规划数据</p></div></div><div id="task-stage" class="task-stage" hidden></div><ol id="checkpoints" class="checkpoints"><li class="empty-state">检查点未知</li></ol><div class="progress-summary"><div><span>已完成</span><strong id="completed-value">未知</strong></div><div><span>待完成</span><strong id="remaining-value">未知</strong></div><div><span>主体匹配</span><strong id="construction-value">未知</strong></div><div><span>收尾待处理</span><strong id="finishing-value">未知</strong></div></div><div class="acceptance-section"><div class="section-heading"><h3>建筑验收</h3><span id="construction-status" class="tag">验收未知</span></div><p id="construction-note" class="helper-text">床、箱子、熔炉、工作台逐项验收</p><div id="facilities-list" class="facilities-grid"></div><div id="base-work" class="event-list" hidden></div></div><p id="materials-note" class="helper-text">材料进度未知，等待后端提供材料数量。</p><div id="materials-list" class="materials-list"></div></section>
+
+          <section id="storage" class="panel" aria-labelledby="storage-title"><div class="panel-heading"><div><h2 id="storage-title">背包与仓储</h2></div><span id="storage-total" class="tag">数量未知</span></div><div class="storage-toolbar"><div class="segmented" role="tablist" aria-label="库存类型"><button id="inventory-tab" class="segment is-active" role="tab" aria-selected="true" aria-controls="inventory-panel" type="button">随身背包 <span id="inventory-count">—</span></button><button id="chests-tab" class="segment" role="tab" aria-selected="false" aria-controls="chests-panel" tabindex="-1" type="button">箱子库存 <span id="chests-count">—</span></button></div><label class="search-field"><span class="sr-only">搜索物品或箱子</span><input id="inventory-search" type="search" placeholder="搜索物品或箱子…" autocomplete="off"></label></div><div id="inventory-panel" role="tabpanel" aria-labelledby="inventory-tab"><div id="inventory-list" class="inventory-grid"><p class="empty-state">等待背包数据</p></div></div><div id="chests-panel" role="tabpanel" aria-labelledby="chests-tab" hidden><div id="chests-list" class="chests-list"></div></div></section>
+        </div>
+
+        <div class="side-column">
+          <section class="panel viewer-panel" aria-labelledby="viewer-title"><div class="panel-heading"><div><h2 id="viewer-title">世界视窗</h2></div><span id="viewer-status" class="tag"><span class="status-dot"></span><span id="viewer-status-label">等待画面</span></span></div><div class="viewer-stage" id="viewer-stage"><iframe id="world-viewer" title="Minecraft Agent 实时画面" sandbox="allow-scripts allow-same-origin allow-pointer-lock" referrerpolicy="same-origin" hidden></iframe><div class="viewer-placeholder" id="viewer-placeholder"><div class="viewer-grid" aria-hidden="true"></div><span class="viewer-icon"><svg class="icon"><use href="#i-camera"/></svg></span><strong id="viewer-placeholder-title">等待世界画面</strong><p id="viewer-placeholder-text">画面服务就绪后，将自动连接</p></div><span class="viewer-caption" id="viewer-caption" hidden>实时画面 · 第一人称</span></div><div class="viewer-toolbar"><span class="muted">镜头视角</span><div class="segmented camera-controls" role="group" aria-label="切换镜头"><button class="segment is-active" type="button" data-camera="first" aria-pressed="true" disabled>第一人称</button><button class="segment" type="button" data-camera="third" aria-pressed="false" disabled>第三人称</button><button class="segment" type="button" data-camera="top" aria-pressed="false" disabled>俯视</button></div><button id="viewer-retry" class="icon-button" aria-label="重新连接画面" title="重新连接画面" type="button" disabled><svg class="icon"><use href="#i-refresh"/></svg></button></div><p id="viewer-note" class="helper-text viewer-note">画面连接与 Agent 状态分别监测。</p><div id="block-info" class="block-info" hidden></div></section>
+
+          <section id="safety" class="panel" aria-labelledby="safety-title"><div class="panel-heading"><div><h2 id="safety-title">危险与卡点</h2></div><span id="safety-status" class="tag">未知</span></div><div class="diagnostics"><div class="diagnostic-top"><span>无实质进展</span><strong id="no-progress-time">未知</strong><span id="stalled-status" class="tag">卡点未知</span></div><dl class="diagnostic-grid"><div><dt>寻路状态</dt><dd id="navigation-status">未知</dd></div><div><dt>路径 / 轨迹</dt><dd id="path-summary">未知</dd></div><div><dt>访问节点</dt><dd id="navigation-nodes">未知</dd></div><div><dt>目标坐标</dt><dd id="navigation-goal">未知</dd></div></dl></div><div class="safety-section"><h3><svg class="icon"><use href="#i-shield"/></svg>危险监测 <span id="danger-count" class="count">—</span></h3><div id="danger-list" class="event-list"><p class="empty-state compact">等待危险数据</p></div></div><div class="safety-section"><h3><svg class="icon"><use href="#i-pin"/></svg>失败与卡点 <span id="failure-count" class="count">—</span></h3><div id="failure-list" class="event-list"><p class="empty-state compact">等待失败记录</p></div></div><details class="incident-panel" open><summary>卡顿与处理历史</summary><p id="incident-write-error" class="notice" hidden>部分记录未能写入磁盘</p><div id="incident-list" class="event-list"></div></details></section>
+
+          <section id="conversation" class="panel chat-panel" aria-labelledby="conversation-title"><div class="panel-heading"><div><h2 id="conversation-title">指令与对话</h2></div><span class="tag tag-blue">Web 频道</span></div><div id="message-list" class="message-list" role="log" aria-label="对话记录" aria-live="polite" aria-relevant="additions"><div class="chat-welcome"><span class="chat-welcome-mark">方</span><strong>暂无对话记录</strong><p>对话只读；临时任务会抢占主任务，结束后自动恢复。</p></div></div><form id="chat-form" class="chat-composer"><div class="composer-heading"><div class="segmented" role="group" aria-label="发送模式"><button id="mode-chat" class="segment is-active" type="button" aria-pressed="true">对话</button><button id="mode-task" class="segment" type="button" aria-pressed="false">临时任务</button></div><span id="chat-mode-hint" class="muted">询问状态或交流</span></div><label class="sr-only" for="chat-input">消息内容</label><textarea id="chat-input" rows="3" maxlength="4000" placeholder="问问进展，或切换到临时任务…" required></textarea><div class="composer-footer"><span class="muted">Enter 发送 · Shift + Enter 换行</span><button id="send-message" class="button button-primary" type="submit">发送<svg class="icon"><use href="#i-send"/></svg></button></div><p id="chat-feedback" class="form-feedback" role="status"></p></form></section>
+        </div>
+      </div>
+      <footer class="page-footer"><span>方舟 · Minecraft Agent 监控台</span><span>快照经 SSE 实时同步 <span class="footer-dot">·</span> <span id="footer-updated">尚未收到数据</span></span></footer>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

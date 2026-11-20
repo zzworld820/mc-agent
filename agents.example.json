@@ -1,0 +1,14 @@
+[
+  {
+    "id": "builder",
+    "minecraft": { "username": "BuilderBot" },
+    "npc": { "name": "建筑 Agent", "autonomy": "on" },
+    "llm": { "baseUrl": "https://api.deepseek.com", "model": "deepseek-chat", "apiKeyEnv": "BUILDER_LLM_API_KEY" }
+  },
+  {
+    "id": "farmer",
+    "minecraft": { "username": "FarmerBot" },
+    "npc": { "name": "农田 Agent", "autonomy": "on" },
+    "llm": { "baseUrl": "http://127.0.0.1:11434/v1", "model": "local-model", "apiKeyEnv": "FARMER_LLM_API_KEY" }
+  }
+]

@@ -14,62 +14,71 @@ import { createLogger } from './logger.js';
 import { MemoryManager } from './memory/manager.js';
 import { attachMemory } from './memory/runtime.js';
 import { prepareMemoryOptions, resolveWorldOptions, watchWorldIdentity } from './memory/bootstrap.js';
+import { loadAgentProfiles } from './agent-profiles.js';
+import { startWebService } from './web/server.js';
 
 const log = createLogger('main');
-const memoryOptions = await prepareMemoryOptions(config.memory, config.minecraft.username);
 const memorySessions = new Set();
+const profiles = await loadAgentProfiles(config);
+const agents = profiles.map(profile => ({ ...profile, actions: createActionRegistry({
+  allowDig: profile.npc.allowDig,
+  allowCombat: profile.npc.allowCombat,
+  allowAutonomy: profile.npc.autonomy !== 'off',
+}) }));
+const web = config.web.enabled ? await startWebService({ agents, options: config.web })
+  .catch((error) => { log.warn(`Web 服务启动失败：${error.code || '请检查网页配置'}`); return null; }) : null;
+if (web) log.info(`Web 监控与对话 ${web.url}`);
 
-const actions = createActionRegistry({
-  allowDig: config.npc.allowDig,
-  allowCombat: config.npc.allowCombat,
-  allowAutonomy: config.npc.autonomy !== 'off',
-});
-const chat = createChatHandler({ npc: config.npc, llm: config.llm, actions });
-
-log.info(
-  `能力开关：挖方块 ${config.npc.allowDig ? '开' : '关'}，打怪 ${config.npc.allowCombat ? '开' : '关'}，自主发育 ${config.npc.autonomy}`,
-);
-
-const botHandle = startBot(config.minecraft, async (bot) => {
-  let ended = false;
-  bot.once('end', () => { ended = true; });
-  const options = await resolveWorldOptions(memoryOptions, bot);
-  const memory = new MemoryManager(options, config.npc.name);
-  let available = memory.enabled;
-  if (memory.enabled) {
-    if (options.identitySource === 'session') log.warn('服务器未提供持久世界 ID：已自动建立临时分区，重连不会猜测合并旧记忆；设置一次 WORLD_ID 或接入服务端身份通道后可持久续接');
-    try { await memory.initialize(); } catch {
-      available = false;
-      log.warn('MongoDB 暂不可用，游戏继续；长期记忆尚未在线，可通过记忆工具重试连接');
+async function startAgent(profile) {
+  const { actions } = profile;
+  const memoryOptions = await prepareMemoryOptions(profile.memory, profile.minecraft.username);
+  const chat = createChatHandler({ npc: profile.npc, llm: profile.llm, actions });
+  return startBot(profile.minecraft, async (bot) => {
+    bot.portfolioAgentId = profiles.length > 1 ? profile.id : null;
+    let ended = false;
+    bot.once('end', () => { ended = true; });
+    const options = await resolveWorldOptions(memoryOptions, bot);
+    const memory = new MemoryManager(options, profile.npc.name);
+    let available = memory.enabled;
+    if (memory.enabled) {
+      if (options.identitySource === 'session') log.warn('服务器未提供持久世界 ID：已自动建立临时分区，重连不会猜测合并旧记忆；设置一次 WORLD_ID 或接入服务端身份通道后可持久续接');
+      try { await memory.initialize(); } catch {
+        available = false;
+        log.warn('MongoDB 暂不可用，游戏继续；长期记忆尚未在线，可通过记忆工具重试连接');
+      }
     }
-  }
-  if (ended) { await memory.close(); return; }
-  const session = attachMemory(bot, memory, log);
-  session.enabled = available;
-  session.identitySource = options.identitySource;
-  memorySessions.add(session);
-  bot.once('end', () => session.flush().then(() => memory.close()).finally(() => memorySessions.delete(session)));
-  bot.farmOptions = config.farm;
-  bot.supplyOptions = config.supplies;
-  actions.attach(bot); // 先装好动作（寻路插件、本能反应），聊天里才能调用
-  bot.once('end', () => actions.tasks.cancel('连接断开，停止旧连接的任务'));
-  chat.attach(bot);
-  if (config.npc.autonomy === 'auto') {
-    // 等区块加载一会儿再开始，不然一进服什么都“看不见”
-    const startup = setTimeout(() => {
-      if (!ended && !bot.autonomyStartupCancelled && !actions.tasks.current) log.info(startAutonomy({ bot, tasks: actions.tasks, mode: config.npc.autonomyMode }));
-    }, Number(process.env.SURVIVE_DELAY_MS ?? 3000));
-    bot.once('end', () => clearTimeout(startup));
-  }
-}, { prepareBot: watchWorldIdentity });
+    if (ended) { await memory.close(); return; }
+    const session = attachMemory(bot, memory, log);
+    session.enabled = available;
+    session.identitySource = options.identitySource;
+    memorySessions.add(session);
+    bot.once('end', () => session.flush().then(() => memory.close()).finally(() => memorySessions.delete(session)));
+    bot.farmOptions = profile.farm;
+    bot.supplyOptions = profile.supplies;
+    actions.attach(bot); // 先装好动作（寻路插件、本能反应），聊天里才能调用
+    bot.once('end', () => actions.tasks.cancel('连接断开，停止旧连接的任务'));
+    chat.attach(bot);
+    await web?.attach(bot, profile.id);
+    if (profile.npc.autonomy === 'auto') {
+      // 等区块加载一会儿再开始，不然一进服什么都“看不见”
+      const startup = setTimeout(() => {
+        if (!ended && !bot.autonomyStartupCancelled && !actions.tasks.current) log.info(startAutonomy({ bot, tasks: actions.tasks, mode: profile.npc.autonomyMode }));
+      }, Number(process.env.SURVIVE_DELAY_MS ?? 3000));
+      bot.once('end', () => clearTimeout(startup));
+    }
+  }, { prepareBot: watchWorldIdentity });
+}
+const handles = await Promise.all(agents.map(startAgent));
 
 // Ctrl+C 时让机器人体面下线，而不是直接掉线
-process.on('SIGINT', () => {
+function shutdown() {
   log.info('收到退出信号，机器人下线');
-  botHandle.stop();
+  for (const handle of handles) handle.stop();
   const deadline = setTimeout(() => process.exit(0), 5000);
-  Promise.all([...memorySessions].map((session) => session.flush()))
+  Promise.all([web?.close(), ...[...memorySessions].map((session) => session.flush())])
     .then(() => Promise.all([...memorySessions].map((session) => session.manager.close())))
     .catch(() => log.warn('退出时未能完成全部记忆写入'))
     .finally(() => { clearTimeout(deadline); process.exit(0); });
-});
+}
+process.once('SIGINT', shutdown);
+process.once('SIGTERM', shutdown);

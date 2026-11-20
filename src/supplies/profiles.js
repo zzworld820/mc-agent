@@ -36,7 +36,17 @@ export function taskBudget(bot, task = {}) {
     : profile === 'travel' ? policy.travelFood : policy.localFood;
   const foodTarget = Math.ceil(Math.max(base, distance * 2 * policy.pointsPerBlock + minutes * policy.pointsPerMinute + policy.localMinimum));
   const needsLight = profile === 'mining' || task.needsLight === true;
-  return { profile, foodTarget, foodMinimum: Math.max(policy.localMinimum, Math.ceil(foodTarget / 3)),
+  // 起步建设使用已知住所周围的小范围工作预算，身体状态或距离改变后立即恢复常规预算。
+  const anchor = task.constructionHome;
+  const localConstruction = profile === 'local' && task.risk === 'low' && anchor
+    && anchor.dimension === String(bot.game.dimension)
+    && bot.entity.position.distanceTo(anchor) <= 64
+    && (!destination || bot.entity.position.distanceTo(destination) <= 64)
+    && bot.health >= policy.hurtBelow && bot.food >= Math.max(16, policy.interruptBelow)
+    && !needsLight;
+  return { profile, foodTarget: localConstruction ? 0 : foodTarget,
+    foodMinimum: localConstruction ? 0 : Math.max(policy.localMinimum, Math.ceil(foodTarget / 3)),
+    localConstruction: !!localConstruction,
     torches: needsLight ? Math.max(policy.miningTorches, Math.ceil(minutes)) : 0,
     minimumTorches: needsLight ? policy.minimumTorches : 0,
     tool: task.tool || (profile === 'mining' ? 'stone_pickaxe' : null),

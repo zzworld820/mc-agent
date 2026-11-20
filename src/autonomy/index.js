@@ -28,6 +28,7 @@ const LOW_OXYGEN = 10;
  */
 export function startAutonomy({ bot, tasks, owner = null, isWhisper = false, mode = 'survival' }) {
   if (bot.autonomyOptions?.allowDig === false) return '自主采集已被 NPC_ALLOW_DIG=false 关闭，不能启动建设型自主生存';
+  if (['survival', 'milestones'].includes(mode)) bot.activeAutonomyMode = mode;
   if (mode === 'survival') return startSurvival({ bot, tasks, owner, isWhisper });
   if (mode !== 'milestones') return '不支持的自主模式，使用 survival 或 milestones';
   if (tasks.current?.kind === 'autonomy') return `已经在自主发育了：${tasks.describe()}`;

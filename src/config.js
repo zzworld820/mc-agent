@@ -21,6 +21,14 @@ function readBoolean(name, fallback) {
 }
 
 export const config = {
+  web: {
+    enabled: readBoolean('WEB_ENABLED', true),
+    host: readString('WEB_HOST', '127.0.0.1'),
+    port: readNumber('WEB_PORT', 3000),
+    viewDistance: Math.min(6, readNumber('WEB_VIEW_DISTANCE', 3)),
+    temporaryPriority: readNumber('WEB_TEMPORARY_PRIORITY', 80),
+    primaryPriority: readNumber('WEB_PRIMARY_PRIORITY', 50),
+  },
   supplies: validateSupplySettings({
     eatBelow: readNumber('SUPPLY_EAT_BELOW', 18), interruptBelow: readNumber('SUPPLY_INTERRUPT_BELOW', 12),
     emergencyBelow: readNumber('SUPPLY_EMERGENCY_BELOW', 6), hurtBelow: readNumber('SUPPLY_HURT_BELOW', 14),

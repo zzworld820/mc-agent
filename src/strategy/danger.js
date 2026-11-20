@@ -1,7 +1,7 @@
 // 快速、确定性的风险判断；不依赖模型请求，也不把附近的中立动物当作敌人。
 import { Vec3 } from 'vec3';
 import pathfinderPkg from 'mineflayer-pathfinder';
-import { goTo, haltBot, sleep, throwIfAborted, useMovementProfile } from '../actions/helpers.js';
+import { goTo, haltBot, sleep, throwIfAborted, useMovementProfile, hasOwnedShelterCover } from '../actions/helpers.js';
 import { isFightable, equipBestWeapon } from '../actions/combat.js';
 import { reachHome } from './navigation.js';
 
@@ -138,7 +138,7 @@ export async function evadeDanger(ctx, home) {
   let clearSince = 0;
   const deadline = Date.now() + 60000;
   let failedRoutes = 0;
-  let triedHome = false;
+  let lastHomeAttempt = 0;
   let lastSwing = 0;
   await equipBestWeapon(bot);
   const pushAway = () => {
@@ -164,12 +164,18 @@ export async function evadeDanger(ctx, home) {
         try { await sleep(1000, signal); } finally { bot.clearControlStates(); }
         continue;
       }
-      if (!triedHome && home && home.dimension === String(bot.game.dimension)
+      if (Date.now() - lastHomeAttempt >= 5000 && home && home.dimension === String(bot.game.dimension)
         && new Vec3(home.x, home.y, home.z).distanceTo(bot.entity.position) < 48
-        && !danger.threats.some((threat) => threat.position.distanceTo(home) < 5)
+        && !danger.threats.some((threat) => threat.position.distanceTo(home) < 5
+          && !hasOwnedShelterCover(bot, ctx.state, bot.entities[threat.id] || threat,
+            new Vec3(home.x, home.y, home.z), { entering: true }))
         && safeStanding(bot, new Vec3(home.x, home.y, home.z))) {
-        triedHome = true;
-        try { if (await reachHome(ctx, home)) continue; } catch (err) { if (signal.aborted) throw err; }
+        lastHomeAttempt = Date.now();
+        const previous = ctx.shelterRetreat;
+        ctx.shelterRetreat = true;
+        try { if (await reachHome(ctx, home)) continue; }
+        catch (err) { if (signal.aborted) throw err; ctx.log(`避险返家未完成：${err.message}，重新观察掩护路线`); }
+        finally { ctx.shelterRetreat = previous; useMovementProfile(bot, 'safe'); }
       }
       if (danger.burning && !danger.inWater) {
         const water = bot.findBlocks({ matching: bot.registry.blocksByName.water.id, maxDistance: 10, count: 40 })

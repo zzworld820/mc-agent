@@ -58,6 +58,8 @@ export function chooseFood(bot, state = null) {
 
 export function knownSupplyChests(state, dimension) {
   const chests = [...(state.storage?.dimension === dimension ? state.storage.chests.map((chest) => ({ chest, mode: state.storage.mode })) : []),
+    ...(state.archivedStorage || []).filter((store) => store.dimension === dimension)
+      .flatMap((store) => store.chests.map((chest) => ({ chest, mode: store.mode }))),
     ...(state.supplies?.warehouses || []).filter((chest) => chest.dimension === dimension).map((chest) => ({ chest, mode: chest.mode }))];
   const seen = new Set();
   return chests.filter(({ chest }) => {

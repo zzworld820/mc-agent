@@ -26,6 +26,7 @@ export async function loadStrategyState(bot) {
   if (!saved || (local?.updatedAt ?? 0) > (saved.updatedAt ?? 0)) saved = local;
   if (saved && saved.schemaVersion !== 1) throw new Error('自主生存记录版本不支持，保留原记录');
   return { schemaVersion: 1, home: null, farm: null, storage: null, farmConfig: {}, pastures: [], failures: {}, lastGoal: null, ...saved,
+    development: { ...saved?.development }, archivedStorage: saved?.archivedStorage || [],
     partition: location(bot),
     unreachable: new Map(), reservedItems: new Set(['wheat_seeds', 'beetroot_seeds', 'pumpkin_seeds', 'melon_seeds', 'potato', 'carrot', 'wheat']) };
 }

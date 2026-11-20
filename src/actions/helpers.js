@@ -3,6 +3,7 @@
 import pathfinderPkg from 'mineflayer-pathfinder';
 import physicsPkg from 'prismarine-physics';
 import { Vec3 } from 'vec3';
+import { canAlterEntranceTerrain } from '../strategy/access.js';
 
 const { pathfinder, Movements } = pathfinderPkg;
 
@@ -53,13 +54,18 @@ export function useMovementProfile(bot, profile) {
     }
     return block;
   };
-  if (profile === 'safe') {
+  const passive = profile === 'safe' || profile === 'retreat';
+  if (passive) {
     movements.canDig = false;
     movements.allow1by1towers = false;
     movements.scafoldingBlocks = [];
     movements.allowParkour = false;
     movements.maxDropDown = 3;
   } else {
+    // 自主挖路也必须保留树干，原木由整树采伐技能统一处理。
+    for (const block of bot.registry.blocksArray) {
+      if (block.name.endsWith('_log')) movements.blocksCantBreak.add(block.id);
+    }
     // 自己放的工作台、熔炉、箱子不要挖掉
     for (const name of ['crafting_table', 'furnace', 'chest', 'bed']) {
       const block = bot.registry.blocksByName[name];
@@ -77,6 +83,8 @@ export function useMovementProfile(bot, profile) {
         if (!state || state.partition.dimension !== String(bot.game.dimension)) return 0;
         const p = block.position;
         const home = state.home;
+        const nearArchive = (state.archivedStorage || []).some((storage) => storage.home && Math.abs(p.x - storage.home.x) <= 4
+          && Math.abs(p.z - storage.home.z) <= 4 && Math.abs(p.y - storage.home.y) <= 5);
         const nearHome = home && Math.abs(p.x - home.x) <= 4 && Math.abs(p.z - home.z) <= 4 && Math.abs(p.y - home.y) <= 5;
         const nearFarm = state.farm && p.x >= state.farm.origin.x - 2 && p.x <= state.farm.origin.x + (state.farm.width || 3) + 1
           && p.z >= state.farm.origin.z - 2 && p.z <= state.farm.origin.z + (state.farm.depth || 2) + 1 && Math.abs(p.y - state.farm.origin.y) <= 3;
@@ -88,7 +96,8 @@ export function useMovementProfile(bot, profile) {
           && p.z >= room.origin.z - 1 && p.z <= room.origin.z + room.size.depth && p.y >= room.origin.y - 1 && p.y <= room.origin.y + room.size.wallHeight + 2);
         const nearPasture = state.pastures.some((pasture) => p.x >= pasture.origin.x - 1 && p.x <= pasture.origin.x + 5
           && p.z >= pasture.origin.z - 1 && p.z <= pasture.origin.z + 5 && Math.abs(p.y - pasture.origin.y) <= 3);
-        return nearHome || nearFarm || nearPasture || nearStorage || nearRoom ? Infinity : 0;
+        const protectedHome = (nearArchive || nearHome) && !canAlterEntranceTerrain(bot, state, block);
+        return protectedHome || nearFarm || nearPasture || nearStorage || nearRoom ? Infinity : 0;
       });
     }
     // 垫脚用的方块：泥土、圆石、深板岩圆石、下界岩
@@ -98,10 +107,10 @@ export function useMovementProfile(bot, profile) {
     // 尽量别贴着岩浆走：被怪一顶就掉进去了（下界里测试时被疣猪兽顶进岩浆死过）
     movements.exclusionAreasStep = [(block) => (isNextToLava(bot, block.position) ? 50 : 0)];
   }
-  if (profile === 'safe' || bot.strategySupervisor?.active || bot.supplySupervisor?.active) {
+  if (passive || bot.strategySupervisor?.active || bot.supplySupervisor?.active) {
     const diagonal = movements.getMoveDiagonal.bind(movements);
     movements.getMoveDiagonal = (node, direction, neighbors) => {
-      if (profile === 'safe') return;
+      if (passive) return;
       // 高差转角的对角路线可能通过图搜索却无法通过实际跳跃，改走直角站位。
       const columns = [[direction.x, 0], [0, direction.z], [direction.x, direction.z]];
       const clear = columns.every(([x, z]) => movements.getBlock(node, x, -1, z).physical
@@ -118,13 +127,65 @@ export function useMovementProfile(bot, profile) {
         if (armored && !ranged) return false;
         const range = ranged ? 16 : 9;
         const distance = entity.position.distanceTo(block.position);
-        return distance < range && distance < entity.position.distanceTo(bot.entity.position) - 0.1;
+        // Returning to verified shelter may require briefly moving closer to a
+        // ranged attacker. Prefer cover over an endless flight in open terrain.
+        if (profile === 'retreat') return distance < 3;
+        if (!(distance < range && distance < entity.position.distanceTo(bot.entity.position) - 0.1)) return false;
+        const state = bot.strategySupervisor?.active ? bot.strategySupervisor.state : bot.supplySupervisor?.state;
+        return !hasOwnedShelterCover(bot, state, entity, block.position);
       });
       return dangerous ? 1000 : 0;
     });
   }
   bot.pathfinder.setMovements(movements);
   bot.pathfinder.thinkTimeout = profile === 'safe' ? 5000 : 10000; // 挖路的路线复杂，多给点时间算
+}
+
+// A hostile on the OTHER side of a closed, roofed owned room must not forbid
+// every indoor step towards the door/workstations. Never grant this exemption
+// outside the registered interior, for an indoor hostile, or without real cover.
+export function hasOwnedShelterCover(bot, state, entity, position, { entering = false } = {}) {
+  const home = state?.home;
+  if (!home?.door || home.dimension !== String(bot.game?.dimension) || !bot.world?.raycast) return false;
+  const projectId = home.projectId || state.house?.projectId;
+  const rooms = state.buildingRooms?.[projectId] || state.house?.rooms || [];
+  const inside = (p, room) => p.x >= room.origin.x + 1 && p.x < room.origin.x + room.size.width - 1
+    && p.z >= room.origin.z + 1 && p.z < room.origin.z + room.size.depth - 1
+    && Math.abs(p.y - (room.origin.y + 1)) < .3;
+  const room = rooms.find(room => (entering || inside(bot.entity.position, room)) && indoorRoomStepCost(position, room) === 0);
+  if (!room || rooms.some(room => entity.position.x >= room.origin.x && entity.position.x < room.origin.x + room.size.width
+    && entity.position.z >= room.origin.z && entity.position.z < room.origin.z + room.size.depth
+    && entity.position.y >= room.origin.y + 1 && entity.position.y < room.origin.y + room.size.wallHeight + 1)) return false;
+  const door = bot.blockAt(new Vec3(home.door.x, home.door.y, home.door.z));
+  if (!door?.name.endsWith('_door') || door.getProperties().open !== false) return false;
+  const feet = new Vec3(Math.floor(position.x), room.origin.y + 1, Math.floor(position.z));
+  if (bot.blockAt(feet.offset(0, -1, 0))?.boundingBox !== 'block'
+    || bot.blockAt(new Vec3(feet.x, room.origin.y + room.size.wallHeight + 1, feet.z))?.boundingBox !== 'block') return false;
+  const from = entity.position.offset(0, Math.min(entity.height || 1.6, 1.5), 0);
+  const to = feet.offset(.5, 1.5, .5);
+  const delta = to.minus(from);
+  const distance = delta.norm();
+  if (!distance) return false;
+  const hit = bot.world.raycast(from, delta.normalize(), distance);
+  return hit?.boundingBox === 'block' && !['water', 'lava', 'fire', 'soul_fire'].includes(hit.name);
+}
+
+// Pathfinder applies step exclusions to BOTH feet and head clearance blocks.
+// Allow the two-block body column, while still excluding the doorway, outside,
+// lower floor and any route that would climb to the next standing level.
+export function indoorRoomStepCost(position, { origin, size }) {
+  return position.x > origin.x && position.x < origin.x + size.width - 1
+    && position.z > origin.z && position.z < origin.z + size.depth - 1
+    && position.y >= origin.y + 1 && position.y <= origin.y + 2 ? 0 : Infinity;
+}
+
+export function exposedHostileAt(bot, entity, position) {
+  const from = position.offset(0, 1.5, 0);
+  const to = entity.position.offset(0, Math.min(entity.height || 1, 1.5), 0);
+  const delta = to.minus(from);
+  const distance = delta.norm();
+  if (!distance || !bot.world?.raycast) return true;
+  return !bot.world.raycast(from, delta.scaled(1 / distance), distance);
 }
 
 function isNextToLava(bot, position) {
@@ -141,18 +202,64 @@ export function haltBot(bot) {
   bot.clearControlStates();
 }
 
+// 点击容器、熔炉或工作台表面施工时必须潜行，否则服务器执行的是打开界面。
+export async function placeBlockSneaking(bot, reference, face, signal) {
+  const previous = bot.controlState?.sneak || false;
+  bot.setControlState('sneak', true);
+  try {
+    await sleep(100, signal);
+    throwIfAborted(signal);
+    await bot.placeBlock(reference, face);
+  } finally { bot.setControlState('sneak', previous); }
+}
+
 /**
  * 走到目标位置。可以被 signal 取消，超时会放弃；到不了就抛出中文错误。
  * @param {import('mineflayer').Bot} bot
  * @param {object} goal  mineflayer-pathfinder 的 goal
  */
-export async function goTo(bot, goal, { signal, timeoutMs = 30000, stuckMs = 20000 } = {}) {
+export async function goTo(bot, goal, { signal, timeoutMs = 30000, stuckMs = 20000, preciseFallback = true } = {}) {
+  throwIfAborted(signal);
+  if (goal.isEnd(pathPosition(bot))) return;
   try { return await goToNative(bot, goal, { signal, timeoutMs, stuckMs }); }
   catch (error) {
     throwIfAborted(signal);
-    if (!bot.physics || bot.pathfinder.movements?.canDig !== false) throw error;
-    return followPrecisePath(bot, goal, { signal, timeoutMs });
+    if (!preciseFallback || !bot.physics || bot.pathfinder.movements?.canDig !== false) {
+      recordNavigationFailure(bot, goal, error);
+      throw error;
+    }
+    try { return await followPrecisePath(bot, goal, { signal, timeoutMs }); }
+    catch (preciseError) {
+      throwIfAborted(signal);
+      recordNavigationFailure(bot, goal, preciseError);
+      throw preciseError;
+    }
   }
+}
+
+function recordNavigationFailure(bot, goal, error) {
+  if (Date.now() - (bot.navigationFailure?.at || 0) < 2000) return;
+  // Keep a bounded description of the actual collision cells and active rules;
+  // do not serialize goals wholesale (they can contain the whole bot/world).
+  try {
+    const feet = pathPosition(bot);
+    const movements = bot.pathfinder.movements;
+    const describeGoal = (entry) => ({ type: entry.constructor?.name, x: entry.x, y: entry.y, z: entry.z,
+      position: entry.pos, rangeSq: entry.rangeSq,
+      goals: entry.goals?.map((child) => ({ type: child.constructor?.name, position: child.pos, x: child.x, y: child.y, z: child.z })) });
+    const cells = [];
+    for (let x = -1; x <= 1; x++) for (let z = -1; z <= 1; z++) for (let y = -1; y <= 2; y++) {
+      const position = feet.offset(x, y, z);
+      const block = bot.blockAt(position);
+      const movement = movements.getBlock(feet, x, y, z);
+      cells.push({ position, name: block?.name ?? 'unloaded', shapes: block?.shapes,
+        safe: movement.safe, physical: movement.physical, height: movement.height,
+        stepCost: movements.exclusionStep(movement) });
+    }
+    bot.navigationFailure = { at: Date.now(), position: bot.entity.position.clone(), reason: error.message,
+      canDig: movements.canDig, goal: describeGoal(goal), cells };
+    bot.emit?.('agentNavigationFailure', bot.navigationFailure);
+  } catch { /* Diagnostics must never change movement semantics. */ }
 }
 
 async function goToNative(bot, goal, { signal, timeoutMs, stuckMs }) {
@@ -219,9 +326,16 @@ async function goToNative(bot, goal, { signal, timeoutMs, stuckMs }) {
   }
 
   // pathfinder 在“完全找不到路”时也会当成功返回，所以要自己确认真的到了
-  if (!goal.isEnd(bot.entity.position.floored())) {
-    throw new Error('找不到能走过去的路（我不会挖路、搭路）');
+  if (!goal.isEnd(pathPosition(bot))) {
+    throw new Error(movements?.canDig === false ? '没有可直接步行的安全站位路线' : '可施工路径未能到达目标站位');
   }
+}
+
+// 耕地顶面低于整格1/16，寻路节点仍使用上方站位高度。
+function pathPosition(bot) {
+  const position = bot.entity.position.floored();
+  if (bot.entity.onGround && bot.entity.position.y - position.y > 0.9) position.y++;
+  return position;
 }
 
 // 安全模式的普通执行器卡住后，逐个站位验证并走到中心，避免提前切角。
@@ -244,20 +358,22 @@ async function followPrecisePath(bot, goal, { signal, timeoutMs }) {
     return block;
   } };
   const { PlayerState } = physicsPkg;
+  const controls = { forward: false, back: false, left: false, right: false, jump: false, sprint: false, sneak: false };
+  // 每一站都从上一站的模拟结果继续，避免把整条路线误判成从起点直达每个节点。
+  const simulation = new PlayerState(bot, controls);
   const controlFor = (position, velocity, target) => {
     const x = (target.x - position.x) * 0.08 - velocity.x * 0.8;
     const z = (target.z - position.z) * 0.08 - velocity.z * 0.8;
     return { yaw: Math.atan2(-x, -z), forward: Math.hypot(x, z) > 0.004, jump: target.y > position.y + 0.1 };
   };
   const reached = (position, target, grounded) => grounded
-    && Math.hypot(position.x - target.x, position.z - target.z) < 0.18 && Math.abs(position.y - target.y) < 0.2;
+    && Math.hypot(position.x - target.x, position.z - target.z) < 0.3 && Math.abs(position.y - target.y) < 0.2;
   try {
     for (const node of route.path) {
       throwIfAborted(signal);
       const target = new Vec3(node.x + 0.5, node.y, node.z + 0.5);
-      if (Math.abs(target.y - bot.entity.position.y) > 3) throw new Error('精确步行路线包含过大高差');
-      const controls = { forward: false, back: false, left: false, right: false, jump: false, sprint: false, sneak: false };
-      const simulation = new PlayerState(bot, controls);
+      const nodeStartY = simulation.pos.y;
+      if (Math.abs(target.y - nodeStartY) > 3) throw new Error('精确步行路线包含过大高差');
       let feasible = reached(simulation.pos, target, simulation.onGround);
       for (let tick = 0; tick < 80 && !feasible; tick++) {
         const move = controlFor(simulation.pos, simulation.vel, target);
@@ -265,7 +381,7 @@ async function followPrecisePath(bot, goal, { signal, timeoutMs }) {
         controls.jump = move.jump;
         simulation.yaw = move.yaw;
         bot.physics.simulatePlayer(simulation, world);
-        if (simulation.isInLava || simulation.pos.y < Math.min(target.y, bot.entity.position.y) - 3) break;
+        if (simulation.isInLava || simulation.pos.y < Math.min(target.y, nodeStartY) - 3) break;
         feasible = reached(simulation.pos, target, simulation.onGround);
       }
       if (!feasible) throw new Error('下一站未通过实际碰撞模型验证');
@@ -281,7 +397,7 @@ async function followPrecisePath(bot, goal, { signal, timeoutMs }) {
       }
       bot.clearControlStates();
     }
-    if (!goal.isEnd(bot.entity.position.floored())) throw new Error('精确步行尚未到达目标');
+    if (!goal.isEnd(pathPosition(bot))) throw new Error('精确步行尚未到达目标');
   } finally { bot.clearControlStates(); }
 }
 
@@ -317,7 +433,7 @@ async function alignStandingPosition(bot, signal) {
 }
 
 const PATH_ERRORS = {
-  NoPath: '找不到能走过去的路（我不会挖路、搭路）',
+  NoPath: '当前移动规则下找不到可达目标的路线',
   Timeout: '路线太复杂，没算出来怎么走',
   GoalChanged: '走到一半被别的事打断了',
   PathStopped: '走到一半被叫停了',

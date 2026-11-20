@@ -138,7 +138,10 @@ function walkProfile(bot) {
 }
 
 async function approach(ctx, p) {
-  await goTo(ctx.bot, new goals.GoalNear(p.x, p.y + 1, p.z, 2), { signal: ctx.signal, timeoutMs: 25000 });
+  // 2 blocks lands exactly on a common pathfinder boundary when the final
+  // safe standing node is two blocks away; allow a little margin while staying
+  // within normal block interaction reach.
+  await goTo(ctx.bot, new goals.GoalNear(p.x, p.y + 1, p.z, 3), { signal: ctx.signal, timeoutMs: 25000 });
 }
 
 async function waterBucket(ctx, farm) {
@@ -242,6 +245,7 @@ async function repairInfrastructure(ctx, farm) {
 
 export async function ensureFarm(ctx, { anchor = ctx.bot.entity.position } = {}) {
   const settings = farmSettings(ctx);
+  ctx.stage?.({ title: '管理农田', steps: ['准备种子', '布置农田', '种植与收割'], current: 0 });
   await gatherSeeds(ctx);
   if (!ctx.state.farm) {
     if (!CROPS.some((crop) => countItem(ctx.bot, crop.seed))) return { deferred: true, reason: '未取得种植材料' };
@@ -283,7 +287,9 @@ export async function tendFarm(ctx, { emergency = false } = {}) {
   const settings = farmSettings(ctx);
   if (farm.dimension !== String(ctx.bot.game.dimension)) return { deferred: true, reason: '农田不在当前维度' };
   walkProfile(ctx.bot);
+  ctx.stage?.({ title: '管理农田', steps: ['准备种子', '布置农田', '种植与收割'], current: 1 });
   if (!emergency) await repairInfrastructure(ctx, farm);
+  ctx.stage?.({ title: '管理农田', steps: ['准备种子', '布置农田', '种植与收割'], current: 2 });
   const before = inspectFarm(ctx.bot, farm);
   if (!farm.harvestSession && (before.unknown === 0 || emergency) && before.mature > 0 && (before.matureRatio >= settings.harvestRatio || emergency)) {
     farm.harvestSession = { id: randomUUID(), startedAt: gameClock(ctx.bot), ratio: before.matureRatio, harvested: 0,

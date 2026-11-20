@@ -13,7 +13,7 @@ const log = createLogger('llm');
  *   text：大模型说的话；toolCalls：它要求调用的工具（没有就是空数组）；
  *   message：原始的 assistant 消息，Agent 循环需要把它原样放回对话里
  */
-export async function chatCompletion(llmConfig, messages, tools) {
+export async function chatCompletion(llmConfig, messages, tools, signal) {
   const url = `${llmConfig.baseUrl.replace(/\/$/, '')}/chat/completions`;
 
   const body = {
@@ -31,7 +31,7 @@ export async function chatCompletion(llmConfig, messages, tools) {
       Authorization: `Bearer ${llmConfig.apiKey}`,
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(llmConfig.timeoutMs),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(llmConfig.timeoutMs)]) : AbortSignal.timeout(llmConfig.timeoutMs),
   });
 
   if (!response.ok) {

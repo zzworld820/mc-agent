@@ -5,6 +5,7 @@ import { equipBestWeapon } from '../../actions/combat.js';
 import { goTo, sleep, throwIfAborted } from '../../actions/helpers.js';
 import { foodReservations } from '../../supplies/assessment.js';
 import { placeBlockAt } from './build.js';
+import { tryLocalUnstuck } from '../../strategy/unstuck.js';
 
 const { goals } = pathfinderPkg;
 
@@ -123,6 +124,12 @@ export async function explore(ctx, distance = 48) {
       if (err.name === 'AbortError') throw err;
       state.heading += Math.PI / 2; // 此路不通，换个方向
     }
+  }
+  const target = bot.entity.position.offset(Math.cos(state.heading) * distance, 0, Math.sin(state.heading) * distance);
+  if (await tryLocalUnstuck(ctx, { target })) {
+    ctx.log('局部脱困后重新尝试原探索方向');
+    await goTo(bot, new goals.GoalNearXZ(Math.round(target.x), Math.round(target.z), 4), { signal, timeoutMs: 45000 });
+    return;
   }
   throw new Error('四个方向都走不通，被困住了');
 }

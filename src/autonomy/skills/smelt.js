@@ -13,18 +13,27 @@ const SECONDS_PER_ITEM = 10;
 export async function smelt(ctx, outputName, count) {
   const { bot, signal } = ctx;
   const inputName = SMELTING[outputName];
+  if (countItem(bot, outputName) >= count) return;
+  const furnaceBlock = await ensureFurnace(ctx);
+  let pendingInput = 0;
+  let storedFuel = null;
+  await withFurnace(bot, furnaceBlock, async (furnace) => {
+    if (furnace.outputItem()) await furnace.takeOutput();
+    if (furnace.inputItem() && furnace.inputItem().name !== inputName) await furnace.takeInput();
+    pendingInput = furnace.inputItem()?.count || 0;
+    const item = furnace.fuelItem();
+    storedFuel = item && { name: item.name, count: item.count };
+  });
   const want = count - countItem(bot, outputName);
   if (want <= 0) return;
-
-  await ctx.obtain(inputName, want);
-  const fuel = await ensureFuel(ctx, want);
-  const furnaceBlock = await ensureFurnace(ctx);
+  await ctx.obtain(inputName, Math.max(0, want - pendingInput));
+  const existingFuelNeeded = storedFuel && FUELS[storedFuel.name] ? Math.ceil(want / FUELS[storedFuel.name]) : Infinity;
+  const fuel = storedFuel && storedFuel.count >= existingFuelNeeded
+    ? { name: storedFuel.name, count: existingFuelNeeded } : await ensureFuel(ctx, want);
 
   ctx.log(`用熔炉烧 ${inputName} x${want} → ${outputName}（燃料 ${fuel.name} x${fuel.count}）`);
   await withFurnace(bot, furnaceBlock, async (furnace) => {
-    if (furnace.outputItem()) await furnace.takeOutput(); // 上次没取走的
-    await furnace.putFuel(bot.registry.itemsByName[fuel.name].id, null, fuel.count);
-    await furnace.putInput(bot.registry.itemsByName[inputName].id, null, want);
+    await loadFurnace(bot, furnace, inputName, want, fuel);
   });
 
   // 等的时候把熔炉界面关掉：开着界面没法换武器，怪物来了还不了手（真的被僵尸打死过）
@@ -40,6 +49,17 @@ export async function smelt(ctx, outputName, count) {
     });
   }
   if (countItem(bot, outputName) < count) throw new Error(`${outputName} 没烧够（可能燃料不够）`);
+}
+
+/** 熔炉可能留下被打断任务的原料或燃料，先回收不兼容物品，再补差额。 */
+export async function loadFurnace(bot, furnace, inputName, want, fuel) {
+  if (furnace.outputItem()) await furnace.takeOutput();
+  if (furnace.inputItem() && furnace.inputItem().name !== inputName) await furnace.takeInput();
+  if (furnace.fuelItem() && furnace.fuelItem().name !== fuel.name) await furnace.takeFuel();
+  const fuelNeeded = Math.max(0, fuel.count - (furnace.fuelItem()?.count || 0));
+  if (fuelNeeded) await furnace.putFuel(bot.registry.itemsByName[fuel.name].id, null, fuelNeeded);
+  const inputNeeded = Math.max(0, want - (furnace.inputItem()?.count || 0));
+  if (inputNeeded) await furnace.putInput(bot.registry.itemsByName[inputName].id, null, inputNeeded);
 }
 
 async function withFurnace(bot, block, work) {

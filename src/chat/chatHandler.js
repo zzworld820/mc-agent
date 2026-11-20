@@ -42,7 +42,10 @@ export function createChatHandler({ npc, llm, actions }) {
   }
 
   // 后台任务干完了 → 让大模型看结果、决定下一步
-  actions.tasks.onFinish((outcome) => enqueue(() => handleTaskResult(outcome)));
+  actions.tasks.onFinish((outcome) => {
+    if (outcome.task.source === 'web') return;
+    enqueue(() => handleTaskResult(outcome));
+  });
 
   function attach(newBot) {
     bot = newBot;

@@ -5,6 +5,7 @@ import { scanEnvironment } from '../perception/environment.js';
 import { PERCEPTION_TYPES } from '../perception/structures.js';
 import { describeLocation, readWorldState } from '../perception/state.js';
 import { rememberScene } from '../memory/runtime.js';
+import { developmentStatus } from '../strategy/development.js';
 import { readDanger } from '../strategy/danger.js';
 
 // look_around 会特别留意的方块（资源点、功能方块、危险方块）
@@ -27,6 +28,8 @@ export const perceptionActions = [
       return JSON.stringify({ ...readDanger(bot), strategy: bot.strategySupervisor ? {
         active: bot.strategySupervisor.active, goal: bot.strategySupervisor.goal,
         pausedGoal: bot.strategySupervisor.pausedGoal, retreating: bot.strategySupervisor.retreating,
+        development: developmentStatus(bot, bot.strategySupervisor.state),
+        base: bot.strategySupervisor.state.base || null,
       } : null });
     },
   },
