@@ -4,13 +4,13 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 const DIRECTORY = new URL('../../data/strategy/', import.meta.url);
 const writes = new Map();
 
-function location(bot) {
+export function strategyPartition(bot) {
   return { agent: bot.memory?.agentId || bot.username, world: bot.memory?.worldId || bot.buildingServer,
-    dimension: String(bot.game.dimension), epoch: bot.memory?.manager.epoch || 'initial' };
+    dimension: String(bot.game.dimension), epoch: bot.memory?.manager?.epoch || 'initial' };
 }
 
 function stateFile(bot) {
-  return new URL(`${createHash('sha256').update(JSON.stringify(location(bot))).digest('hex')}.json`, DIRECTORY);
+  return new URL(`${createHash('sha256').update(JSON.stringify(strategyPartition(bot))).digest('hex')}.json`, DIRECTORY);
 }
 
 export async function loadStrategyState(bot) {
@@ -27,12 +27,12 @@ export async function loadStrategyState(bot) {
   if (saved && saved.schemaVersion !== 1) throw new Error('自主生存记录版本不支持，保留原记录');
   return { schemaVersion: 1, home: null, farm: null, storage: null, farmConfig: {}, pastures: [], failures: {}, lastGoal: null, ...saved,
     development: { ...saved?.development }, archivedStorage: saved?.archivedStorage || [],
-    partition: location(bot),
+    partition: strategyPartition(bot),
     unreachable: new Map(), reservedItems: new Set(['wheat_seeds', 'beetroot_seeds', 'pumpkin_seeds', 'melon_seeds', 'potato', 'carrot', 'wheat']) };
 }
 
 export async function saveStrategyState(bot, state) {
-  if (JSON.stringify(state.partition) !== JSON.stringify(location(bot))) throw new Error('世界或维度已改变，不将旧策略状态写入新分区');
+  if (JSON.stringify(state.partition) !== JSON.stringify(strategyPartition(bot))) throw new Error('世界或维度已改变，不将旧策略状态写入新分区');
   state.updatedAt = Date.now();
   const { unreachable, reservedItems, ...saved } = state;
   const snapshot = structuredClone(saved);

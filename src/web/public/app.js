@@ -175,7 +175,15 @@
   function renderMissions() {
     const missions = record(snapshot.missions);
     const primary = mission(missions.primary);
+    const manual = missions.manual === true;
     const task = record(snapshot.task);
+    set('primary-caption', manual ? '控制方式' : '主任务');
+    set('queue-heading', manual ? '指令队列' : '临时任务');
+    set('queue-settings-label', manual ? '查看队列' : '队列与执行优先级');
+    $('priorities-form').hidden = manual;
+    $('pause-primary').hidden = manual;
+    $('resume-primary').hidden = manual;
+    $('chat-mode-buttons').hidden = manual;
     set('primary-label', primary.label ?? primary.name ?? '等待主任务');
     const detail = text(primary.text ?? primary.description, '');
     const normalize = (value) => text(value, '').replace(/\s+/g, ' ').trim();
@@ -184,7 +192,7 @@
     // Keep that progress in the execution row and avoid a duplicate paragraph.
     $('primary-detail').hidden = !detail || normalize(detail) === normalize(primary.label)
       || normalize(detail) === normalize(task.progress);
-    badge('primary-status', statusLabel(primary.status), statusClass(primary.status));
+    badge('primary-status', manual ? '手动接单' : statusLabel(primary.status), manual ? 'tag-blue' : statusClass(primary.status));
     badge('task-status', task.label ?? '等待同步', task.label ? 'tag-blue' : '');
     const percent = progressPercent(task.progress);
     set('task-label', typeof task.progress === 'string' && task.progress ? task.progress : `当前执行：${text(task.label)}`);
@@ -197,7 +205,13 @@
     else if (primary.status === 'resuming') preservation = '正在恢复主任务';
     else if (primary.saved === true || primary.savedAt) preservation = '主任务已保存';
     if (primary.restoreError) preservation = `恢复失败：${text(primary.restoreError)}`;
-    set('primary-preservation', preservation);
+    set('primary-preservation', manual ? '游戏与 Web 指令同级，执行完毕后待命' : preservation);
+    set('temporary-policy', manual || primary.enabled === false ? '结束后继续待命' : '主任务启用时，结束后自动恢复');
+    renderChatModeHint();
+    if (manual) {
+      $('chat-input').placeholder = '直接发指令或提问，例如：到坐标 20 64 30';
+      set('send-message', '发送');
+    }
     const temporary = list(missions.temporary);
     const active = temporary.filter((entry) => ['running', 'cancelling'].includes(entry.status));
     const queued = temporary.filter((entry) => entry.status === 'queued');
@@ -246,6 +260,136 @@
     }
     set('priority-note', missions.priorities ? `已生效：临时 ${text(missions.priorities.temporary)} / 主任务 ${text(missions.priorities.primary)}；数值越大越优先。`
       : '当前值未知；默认临时 80 / 主任务 50。');
+  }
+
+  const projectLabels = {
+    active: '进行中', paused: '已暂停', complete: '已验收', cancelled: '已取消',
+    ready: '可执行', waiting: '等待条件', pending: '待核验', blocked: '受阻',
+    verified: '已验收', dependent: '等待前置步骤', executing: '当前执行',
+    progress: '取得进展', failed: '未取得进展', deferred: '暂缓',
+  };
+  const projectStatus = (value) => projectLabels[value] || '待核验';
+  const projectTone = (value) => ['complete', 'verified', 'progress'].includes(value) ? 'tag-green'
+    : ['blocked', 'failed'].includes(value) ? 'tag-red'
+      : ['paused', 'waiting', 'dependent', 'deferred'].includes(value) ? 'tag-amber' : 'tag-blue';
+  const crops = { wheat: '小麦', potatoes: '马铃薯', beetroots: '甜菜', carrots: '胡萝卜' };
+
+  function projectRequirements(project) {
+    const options = record(project.options);
+    if (project.kind === 'house') return [
+      options.mode === 'expand' ? '现有房屋加层' : '新建房屋', text(options.model),
+      integer(options.floors) + ' 层', '床与工作台各 1',
+      '箱子 ' + integer(options.chests), '熔炉 ' + integer(options.furnaces),
+    ].join(' · ');
+    if (project.kind === 'farm') return [
+      '至少 ' + integer(options.width) + ' × ' + integer(options.depth), crops[options.crop] || text(options.crop),
+      options.harvest ? '验收收割与补种' : '验收灌溉与种植',
+    ].join(' · ');
+    return '';
+  }
+
+  function projectSteps(container, project, currentId) {
+    const steps = list(project.steps);
+    const known = new Map(steps.map(step => [step.id, step.label]));
+    container.replaceChildren(...steps.map(step => {
+      const current = step.id === currentId;
+      const status = current ? 'executing' : step.status;
+      const row = node('li', 'project-step' + (current ? ' is-current' : ''));
+      const heading = node('div', 'project-heading');
+      heading.append(node('strong', '', step.label), node('span', 'tag ' + projectTone(status), projectStatus(status)));
+      row.append(heading);
+      if (current) row.setAttribute('aria-current', 'step');
+      if (step.detail) row.append(node('p', '', step.detail));
+      const needs = list(step.needs).map(id => known.get(id)).filter(Boolean);
+      if (status === 'dependent' && needs.length) row.append(node('p', 'muted', '前置步骤 · ' + needs.join('、')));
+      if (step.lastResult?.reason && step.lastResult.status !== 'progress') {
+        row.append(node('p', 'project-result', projectStatus(step.lastResult.status) + ' · ' + step.lastResult.reason));
+      }
+      return row;
+    }));
+  }
+
+  function renderProjects() {
+    const data = record(snapshot.projects);
+    const project = data.active;
+    const runtime = data.runtime;
+    const connected = snapshot.connected === true;
+    const paused = project?.status === 'paused';
+    const executing = connected && project?.status === 'active' && runtime?.status === 'executing';
+    const task = data.task;
+    const steps = list(project?.steps);
+    const done = steps.filter(step => step.status === 'verified').length;
+    const blocked = steps.some(step => step.status === 'blocked');
+    $('project-empty').hidden = Boolean(project);
+    $('project-active').hidden = !project;
+    set('project-empty', receivedAt ? '当前没有工程' : '等待工程记录');
+    let label = '空闲';
+    if (project) {
+      label = '待推进';
+      if (!connected) label = '离线快照';
+      else if (paused) label = '已暂停';
+      else if (executing) label = '执行中';
+      else if (runtime?.status === 'planning') label = 'AI 规划中';
+      else if (blocked) label = '有受阻步骤';
+      else if (runtime?.status === 'waiting') label = '等待条件';
+      else if (snapshot.missions?.primary?.pausedBy === 'user') label = '主任务已暂停';
+      set('project-objective', project.objective);
+      set('project-options', projectRequirements(project));
+      set('project-count', done + '/' + steps.length + ' 项已验收');
+      const maximum = Math.max(steps.length, 1);
+      $('project-bar').parentElement.setAttribute('aria-valuemax', String(maximum));
+      meter('project-bar', done, maximum);
+    }
+    badge('project-status', label, paused || blocked ? 'tag-amber' : executing ? 'tag-green' : 'tag-blue');
+    renderList('project-execution', project && { runtime, task, connected, paused, executing, step: runtime?.stepId }, container => {
+      container.replaceChildren();
+      if (!project) return;
+      const active = steps.find(step => step.id === runtime?.stepId);
+      let heading = '等待调度', detail = '';
+      if (!connected) heading = 'Agent 离线，显示最近记录';
+      else if (paused) heading = '工程已暂停';
+      else if (executing) {
+        const phase = runtime.phase?.steps?.[runtime.phase?.current];
+        heading = active ? active.label : '支援技能 · ' + text(runtime.skillLabel || runtime.skill);
+        if (phase) heading += ' · ' + phase;
+        detail = [runtime.plan, task?.progress].filter(Boolean).join(' · ');
+      } else if (runtime?.status === 'planning') heading = 'AI 正在选择下一步';
+      else if (runtime?.status === 'waiting') { heading = '等待条件'; detail = runtime.reason || task?.progress; }
+      else if (task?.progress) { heading = 'Agent 当前状态'; detail = task.progress; }
+      container.append(node('strong', '', heading));
+      if (detail) container.append(node('p', 'muted', detail));
+    });
+    const currentStep = executing ? runtime.stepId : null;
+    renderList('project-steps', [steps, currentStep], container => projectSteps(container, project || {}, currentStep));
+    const activity = list(project?.activity);
+    $('project-activity').hidden = !activity.length;
+    renderList('project-activity-list', activity, container => {
+      container.replaceChildren(...activity.map(event => {
+        const row = node('article', 'incident-row');
+        row.append(node('strong', '', event.step + ' · ' + projectStatus(event.status)));
+        if (event.at) row.append(node('time', 'muted', time(event.at)));
+        if (event.plan) row.append(node('p', '', event.plan));
+        if (event.reason) row.append(node('p', '', event.reason));
+        return row;
+      }));
+    });
+    const history = list(data.history);
+    $('project-history').hidden = !history.length;
+    renderList('project-history-list', history, container => {
+      container.replaceChildren(...history.map(entry => {
+        const row = node('details', 'project-past');
+        row.append(node('summary', '', projectStatus(entry.status) + ' · ' + entry.objective));
+        const withDetails = node('ol', 'project-steps');
+        projectSteps(withDetails, entry);
+        row.append(node('p', 'muted', projectRequirements(entry)), withDetails);
+        return row;
+      }));
+    });
+    $('project-create').hidden = Boolean(project);
+    const unavailable = data.unavailable || (!receivedAt ? '等待 Agent 连接' : '');
+    $('project-availability').hidden = !unavailable;
+    set('project-availability', unavailable);
+    updateControls();
   }
 
   function renderProgress() {
@@ -650,13 +794,19 @@
       renderMessages(true);
     }
   }
+  function renderChatModeHint() {
+    if (snapshot.missions?.manual) { set('chat-mode-hint', '直接对话与执行'); return; }
+    const paused = snapshot.missions?.primary?.enabled === false;
+    set('chat-mode-hint', mode === 'task' ? (paused ? '执行网页指令 · 完成后待命' : '抢占主任务 · 结束后自动恢复') : '只读对话');
+  }
+
   function selectMode(nextMode) {
     mode = nextMode;
     for (const value of ['chat', 'task']) {
       $(`mode-${value}`).classList.toggle('is-active', value === mode);
       $(`mode-${value}`).setAttribute('aria-pressed', String(value === mode));
     }
-    set('chat-mode-hint', mode === 'task' ? '抢占主任务 · 结束后自动恢复' : '只读对话');
+    renderChatModeHint();
     $('chat-input').placeholder = mode === 'task' ? '输入临时任务，例如：收集 16 个橡木原木' : '输入消息，询问当前状态…';
     set('send-message', mode === 'task' ? '发送任务' : '发送');
   }
@@ -683,10 +833,16 @@
   function canControl() { return receivedAt > 0 && Date.now() - receivedAt < 15000 && snapshot.connected === true; }
   function updateControls() {
     const primary = mission(snapshot.missions?.primary);
-    const disabled = !canControl() || snapshot.missions?.primary == null || pending.has('primary');
+    const disabled = snapshot.missions?.manual || !canControl() || snapshot.missions?.primary == null || pending.has('primary');
     $('pause-primary').disabled = disabled || primary.enabled === false || primary.pausedBy === 'user';
     $('resume-primary').disabled = disabled || (primary.status === 'running' && primary.enabled !== false);
     $('save-priorities').disabled = !canControl() || pending.has('priorities');
+    const project = snapshot.projects?.active;
+    const projectDisabled = !canControl() || pending.has('project');
+    $('project-pause').disabled = projectDisabled || !project || project.status === 'paused';
+    $('project-resume').disabled = projectDisabled || !project || !snapshot.projects?.enabled;
+    $('project-cancel').disabled = projectDisabled || !project;
+    $('project-submit').disabled = projectDisabled || Boolean(project) || !snapshot.projects?.enabled;
     for (const button of $('temporary-list').querySelectorAll('button')) {
       button.disabled = !canControl() || !button.dataset.cancelId || button.dataset.cancelStatus === 'cancelling'
         || pending.has(`cancel:${button.dataset.cancelId}`);
@@ -708,6 +864,52 @@
       renderMissions();
       updateControls();
     }
+  }
+  $('project-kind').addEventListener('change', () => {
+    for (const kind of ['house', 'farm']) {
+      const shown = $('project-kind').value === kind;
+      $('project-' + kind).hidden = !shown;
+      $('project-' + kind).disabled = !shown;
+    }
+  });
+  async function submitProject(endpoint, payload, success) {
+    if (pending.has('project')) return false;
+    pending.add('project');
+    updateControls();
+    try {
+      const result = await request(endpoint, payload);
+      toast(result?.warning ? success + '。启动暂缓 · ' + result.warning : success);
+      await refreshState();
+      return true;
+    } catch (error) {
+      toast(error.message || '工程操作失败', true);
+      return false;
+    } finally {
+      pending.delete('project');
+      updateControls();
+    }
+  }
+  $('project-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const kind = $('project-kind').value;
+    const value = (field) => $('project-' + field).value.trim();
+    const options = kind === 'house' ? { mode: value('house-mode'), floors: Number(value('floors')) }
+      : { width: Number(value('width')), depth: Number(value('depth')), crop: value('crop'), harvest: $('project-harvest').checked };
+    if (kind === 'house') {
+      if (value('model')) options.model = value('model');
+      for (const item of ['chests', 'furnaces']) if (value(item)) options[item] = Number(value(item));
+    }
+    if (await submitProject('/api/projects', { kind, options, objective: value('request') }, '工程已登记')) {
+      $('project-request').value = '';
+      $('project-create').open = false;
+    }
+  });
+  for (const [operation, message] of Object.entries({ pause: '工程已暂停', resume: '工程已恢复', cancel: '工程已取消' })) {
+    $('project-' + operation).addEventListener('click', () => {
+      const id = snapshot.projects?.active?.id;
+      if (!id || (operation === 'cancel' && !confirm('取消这个工程？已有施工和验收记录会保留。'))) return;
+      submitProject('/api/projects/action', { id, operation }, message);
+    });
   }
   $('pause-primary').addEventListener('click', () => mutate('primary', '/api/primary', { operation: 'pause' }, '暂停请求已接收，等待主任务状态更新'));
   $('resume-primary').addEventListener('click', () => mutate('primary', '/api/primary', { operation: 'resume' }, '恢复请求已接收，等待主任务状态更新'));
@@ -748,6 +950,7 @@
     revision++;
     renderAgent();
     renderMissions();
+    renderProjects();
     renderProgress();
     renderStorage();
     renderSafety();
@@ -857,6 +1060,7 @@
   }).catch(() => {});
   selectMode('chat');
   renderAgent();
+  renderProjects();
   renderProgress();
   renderSafety();
   connectStream();

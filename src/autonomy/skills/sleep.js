@@ -207,19 +207,28 @@ async function coverLocal(ctx, position, supportDepth = 0) {
   }
 }
 
-async function exitPit(ctx, surface, shelter) {
+function outsidePit(position, surface) {
+  return position.x !== surface.x || position.z !== surface.z || position.y >= surface.y;
+}
+
+async function confirmPitExit(ctx, surface) {
   const { bot, signal, state } = ctx;
+  throwIfAborted(signal);
   const feet = bot.entity.position.floored();
-  const inShaft = feet.x === surface.x && feet.z === surface.z && feet.y >= surface.y - 3;
-  const adjacentExit = Math.abs(feet.x - surface.x) + Math.abs(feet.z - surface.z) === 1
-    && feet.y >= surface.y - 1 && feet.y <= surface.y;
-  if ((inShaft && feet.y === surface.y || adjacentExit) && safeExitStanding(bot, feet) && bot.entity.onGround) {
-    delete state.emergencyShelter;
-    await ctx.checkpoint?.();
-    return true;
-  }
-  if (!inShaft || feet.y >= surface.y || !safeExitStanding(bot, feet) || bot.entity.onGround === false) {
-    throw new Error('尚未在登记井内站稳，暂缓出坑');
+  if (!outsidePit(feet, surface) || !bot.entity.onGround || !safeExitStanding(bot, feet)) return false;
+  delete state.emergencyShelter;
+  await ctx.checkpoint?.();
+  ctx.log('已确认在应急坑外安全站稳，清除避难状态');
+  return true;
+}
+
+async function exitPit(ctx, surface, shelter) {
+  const { bot, signal } = ctx;
+  if (await confirmPitExit(ctx, surface)) return true;
+  const feet = bot.entity.position.floored();
+  const inShaft = !outsidePit(feet, surface) && feet.y >= surface.y - 3;
+  if (!inShaft || !safeExitStanding(bot, feet) || bot.entity.onGround === false) {
+    throw new Error('尚未确认井内站位或井外安全落脚点，暂缓出坑');
   }
   const capPosition = surface.offset(0, -1, 0);
   const cap = bot.blockAt(capPosition);
@@ -281,12 +290,8 @@ async function exitPit(ctx, surface, shelter) {
   await goTo(bot, new goals.GoalCompositeAny(exits.map(p => new goals.GoalBlock(p.x, p.y, p.z))), {
     signal, timeoutMs: 15000, stuckMs: 6000, preciseFallback: false,
   });
-  const arrived = bot.entity.position.floored();
-  if (!exits.some(p => p.equals(arrived)) || !safeExitStanding(bot, arrived)) throw new Error('尚未确认到达井口安全站位');
-  delete state.emergencyShelter;
-  await ctx.checkpoint?.();
-  ctx.log('已出应急坑，恢复白天任务');
-  return true;
+  if (await confirmPitExit(ctx, surface)) return true;
+  throw new Error('尚未确认到达井外安全站位');
 }
 
 function enclosed(bot, feet) {
@@ -323,6 +328,14 @@ export async function hideUntilMorning(ctx, { buildOnly = false } = {}) {
     shelter.placedBlocks = oldShell.filter((p) => SHELTER_BLOCKS.includes(bot.blockAt(p)?.name))
       .map((p) => ({ x: p.x, y: p.y, z: p.z, name: bot.blockAt(p).name }));
     await ctx.checkpoint?.();
+  }
+  if (!buildOnly && shelter?.kind === 'pit' && (shelter.depth > 0 || shelter.exiting)
+    && (isNight(bot) || (bot.time?.timeOfDay ?? 0) >= 10000)) {
+    const mouth = new Vec3(shelter.surface.x, shelter.surface.y, shelter.surface.z);
+    if (outsidePit(bot.entity.position.floored(), mouth)) {
+      if (!await confirmPitExit(ctx, mouth)) return false;
+      shelter = null;
+    }
   }
   if (!shelter) {
     const surface = bot.entity.position.floored();

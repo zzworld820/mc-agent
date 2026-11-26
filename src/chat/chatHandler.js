@@ -13,6 +13,9 @@
 import { createLogger } from '../logger.js';
 import { runAgentLoop } from './agentLoop.js';
 import { ConversationMemory } from './memory.js';
+import { createSurvivalPlanner, survivalSkills } from '../strategy/ai.js';
+import { startAutonomy } from '../autonomy/index.js';
+import { changeProject, projectArguments, projectKinds, projectsFor, registerProject } from '../projects/engine.js';
 import { buildSystemPrompt, describeWorld } from './persona.js';
 
 const log = createLogger('chat');
@@ -30,11 +33,12 @@ const STOP_PATTERN = /(停下|停止|别动|站住|别跟|不要跟|不用跟|�
  * 创建聊天能力。返回的 attach(bot) 在每次（重新）进服时调用。
  * 记忆放在 attach 外面，所以断线重连后 NPC 还记得之前聊过什么。
  */
-export function createChatHandler({ npc, llm, actions }) {
+export function createChatHandler({ npc, llm, actions, projectStorage = projectsFor, commands }) {
   const memory = new ConversationMemory(npc.memorySize);
   const systemPrompt = buildSystemPrompt(npc.name);
   let bot = null;
   let queue = Promise.resolve(); // 简单的串行队列
+  let stopVersion = 0;
   let autoSteps = 0; // 连续几次思考是由任务结果自动触发的
 
   if (!llm.apiKey) {
@@ -43,23 +47,29 @@ export function createChatHandler({ npc, llm, actions }) {
 
   // 后台任务干完了 → 让大模型看结果、决定下一步
   actions.tasks.onFinish((outcome) => {
-    if (outcome.task.source === 'web') return;
+    if (commands || outcome.task.source === 'web' || (outcome.task.kind === 'autonomy' && bot?.activeAutonomyMode === 'ai')) return;
     enqueue(() => handleTaskResult(outcome));
   });
 
   function attach(newBot) {
     bot = newBot;
+    if (!commands) bot.survivalPlanner = createSurvivalPlanner({ npc, llm });
+    newBot.once('end', () => { newBot.survivalPlanner?.cancel(); if (bot === newBot) bot = null; });
+
+    newBot.on('projectNotice', (project, text) => {
+      if (project.owner?.player) enqueue(() => send(text, project.owner.player, project.owner.isWhisper, newBot));
+    });
 
     // 公屏聊天
-    bot.on('chat', (username, message) => {
-      if (username === bot.username) return; // 忽略自己说的话
+    newBot.on('chat', (username, message) => {
+      if (bot !== newBot || username === newBot.username) return; // 忽略自己说的话
       if (!shouldReply(message)) return;
       onPlayerMessage(username, message, false);
     });
 
     // 私聊（/msg、/tell）：一律回复
-    bot.on('whisper', (username, message) => {
-      if (username === bot.username) return;
+    newBot.on('whisper', (username, message) => {
+      if (bot !== newBot || username === newBot.username) return;
       onPlayerMessage(username, message, true);
     });
 
@@ -74,24 +84,114 @@ export function createChatHandler({ npc, llm, actions }) {
 
   function onPlayerMessage(username, message, isWhisper) {
     autoSteps = 0; // 玩家说话了，自动步数重新计
+    const connectedBot = bot;
+    const aiMode = (bot.activeAutonomyMode ?? npc.autonomyMode) === 'ai';
     const withoutName = message.split(npc.name).join('').split(bot.username).join('').trim();
+    if (commands) {
+      const text = withoutName.replace(/^[，,：:\s]+/u, '');
+      if (!text) return;
+      const reply = result => enqueue(() => send(result, username, isWhisper, connectedBot));
+      commands.sendGame(text, { player: username, isWhisper, reply }).catch(error => reply(error.message));
+      return;
+    }
     if (STOP_PATTERN.test(withoutName)) {
+      stopVersion++;
       bot.autonomyStartupCancelled = true;
       if (actions.interrupt()) log.info(`${username} 叫停，已立刻停下`);
+      if (aiMode) {
+        bot.survivalPlanner.cancel();
+        enqueue(async () => {
+          if (bot !== connectedBot) return;
+          const store = projectStorage(connectedBot);
+          const active = (await store.read()).active;
+          if (active) await changeProject(store, active, 'pause');
+          await send(active ? '已暂停工程，原需求和进度已保留。' : '已停止当前任务。', username, isWhisper, connectedBot);
+        });
+        return;
+      }
     }
-    enqueue(() => handlePlayerMessage(username, message, isWhisper));
+    const version = stopVersion;
+    enqueue(() => bot === connectedBot && (!aiMode || version === stopVersion)
+      && handlePlayerMessage(username, message, isWhisper, aiMode));
   }
 
   function enqueue(job) {
     queue = queue.then(job).catch((err) => log.error('处理消息失败：', err.message));
   }
 
-  async function handlePlayerMessage(username, message, isWhisper) {
+  async function handlePlayerMessage(username, message, isWhisper, aiMode) {
     log.info(`${isWhisper ? '[私聊] ' : ''}${username}: ${message}`);
     if (!actions.tasks.current) lookAtPlayer(bot, username); // 忙着干活时不转头，免得打断
 
-    const reply = await think(username, `${username} 说：${message}`, { player: username, isWhisper });
-    await send(reply, username, isWhisper);
+    const connectedBot = bot;
+    const reply = await think(username, `${username} 说：${message}`, { player: username, isWhisper },
+      undefined, aiMode ? goalTools(connectedBot, username, isWhisper, message) : actions);
+    await send(reply, username, isWhisper, connectedBot);
+  }
+
+  function goalTools(connectedBot, player, isWhisper, originalMessage) {
+    let submitted = false;
+    const version = stopVersion;
+    const tool = (name, description, properties, required) => ({ type: 'function', function: {
+      name, description, parameters: { type: 'object', properties, required, additionalProperties: false },
+    } });
+    function startIfIdle() {
+      if (actions.tasks.current) return;
+      connectedBot.autonomyStartupCancelled = false;
+      startAutonomy({ bot: connectedBot, tasks: actions.tasks, mode: 'ai' });
+    }
+    return {
+      toolDefinitions: [
+        tool('submit_survival_goal', '登记简单目标，例如补齐指定物品数量。', {
+          objective: { type: 'string', maxLength: 500 },
+        }, ['objective']),
+        tool('submit_survival_project', '登记多步骤房屋或农田工程，保留玩家原话，由本地逐项验收。', {
+          kind: { type: 'string', enum: projectKinds },
+          ...projectArguments,
+        }, ['kind']),
+        tool('manage_survival_project', '读取或管理此世界的现有工程。只有玩家明确要求时才暂停、恢复或取消。', {
+          operation: { type: 'string', enum: ['status', 'pause', 'resume', 'cancel'] },
+        }, ['operation']),
+      ],
+      async run(name, args) {
+        if (bot !== connectedBot || version !== stopVersion) return '旧请求已失效，请重新下达任务';
+        const store = projectStorage(connectedBot);
+        try {
+          const { active, history } = await store.read();
+          if (bot !== connectedBot || version !== stopVersion) return '旧请求已失效，请重新下达任务';
+          if (name === 'manage_survival_project' && args?.operation === 'status') {
+            const project = active || history.at(-1);
+            if (!project) return '此世界没有工程记录';
+            return JSON.stringify({ objective: project.objective, status: project.status, steps: project.steps });
+          }
+          if (submitted) return '一次聊天最多执行一个登记或管理动作';
+          if (npc.autonomy === 'off' || connectedBot.autonomyOptions?.allowDig === false) return '自主任务已关闭';
+          if (connectedBot.memory?.suspended) return '当前世界身份待确认';
+          if (actions.tasks.current && actions.tasks.current.kind !== 'autonomy') return 'Agent 正在执行其他任务';
+          if (name === 'submit_survival_goal') {
+            if (active) return '有持久化工程正在占用任务槽，可先查询或取消该工程';
+            connectedBot.survivalPlanner.submit(args?.objective, result => {
+              enqueue(() => send(result, player, isWhisper, connectedBot));
+            }, { day: connectedBot.time?.day, timeOfDay: connectedBot.time?.timeOfDay });
+          } else if (name === 'submit_survival_project') {
+            if (connectedBot.survivalPlanner.hasRequest()) return '已有临时任务，请等它完成或先叫停';
+            if (!['overworld', 'minecraft:overworld'].includes(String(connectedBot.game.dimension))) return '当前工程模板只适用于主世界';
+            await registerProject(store, { kind: args?.kind, options: args?.[args.kind], objective: originalMessage,
+              owner: { player, isWhisper } });
+          } else if (name === 'manage_survival_project' && ['resume', 'pause', 'cancel'].includes(args?.operation)) {
+            if (!active || active.owner?.player !== player) return '只有当前工程的发起人可以管理该工程';
+            if (args.operation !== 'resume') actions.interrupt();
+            if (!await changeProject(store, active, args.operation)) return '工程状态已变化，请查询后重试';
+            submitted = true;
+            if (args.operation === 'resume') startIfIdle();
+            return { resume: '工程已恢复，将根据现场继续', pause: '工程已暂停，进度已保存', cancel: '工程已取消，已有建筑与历史记录保留' }[args.operation];
+          } else return '未知任务工具';
+          submitted = true;
+          if (bot === connectedBot && version === stopVersion) startIfIdle();
+          return '目标已登记，实际执行结果将另行反馈';
+        } catch (error) { return error.message; }
+      },
+    };
   }
 
   async function handleTaskResult({ task, ok, result }) {
@@ -121,19 +221,27 @@ export function createChatHandler({ npc, llm, actions }) {
    * 问大模型（带工具），成功的话把这一问一答写进该玩家的记忆
    * @param {string} [memoryContent] 写进记忆的版本（默认和 content 一样；任务结果只记结果，不记那段系统提示）
    */
-  async function think(player, content, context, memoryContent = content) {
+  async function think(player, content, context, memoryContent = content, tools = actions) {
     if (!llm.apiKey) {
       return `${player}，我的大脑还没接上（缺 LLM_API_KEY），暂时只会说这句。`;
     }
 
+    const instructions = tools === actions ? systemPrompt : [
+      `你是 ${npc.name}，一个 Minecraft 生存 Agent。先判断玩家在提问还是明确下达任务。`,
+      '简单收集等目标用 submit_survival_goal。建房、农田或加层等多步骤需求必须用 submit_survival_project，完整填写已明确的验收参数。',
+      '房屋自带一张床与工作台；农田可指定一种作物。模板参数无法表达的硬性要求先说明并请玩家确认，勿擅自缩减或转为简单目标。',
+      '查询工程状态用 manage_survival_project。只有玩家明确要求时才变更工程状态。',
+      '任务会由独立的 AI 生存调度执行并回报结果，登记后仅确认收到。',
+      `可用技能：${Object.values(survivalSkills).join('；')}。`,
+    ].join('\n');
     const messages = [
-      { role: 'system', content: `${systemPrompt}\n\n${describeWorld(bot, actions.describeActivity())}` },
+      { role: 'system', content: `${instructions}\n\n${describeWorld(bot, actions.describeActivity())}` },
       ...memory.get(player),
       { role: 'user', content },
     ];
 
     try {
-      const reply = await runAgentLoop({ llm, actions, messages, context });
+      const reply = await runAgentLoop({ llm, actions: tools, messages, context });
       // 调用成功才写入记忆，失败的那轮不留痕迹。
       // 只记“发生了什么、NPC 回了什么”，中间的工具调用不进记忆——
       // NPC 正在做什么、背包里有什么，每次都会通过 describeWorld 重新告诉它。
@@ -146,12 +254,13 @@ export function createChatHandler({ npc, llm, actions }) {
     }
   }
 
-  async function send(reply, player, isWhisper) {
+  async function send(reply, player, isWhisper, connectedBot = bot) {
     log.info(`→ 回复 ${player}: ${reply}`);
     for (const line of splitForChat(reply)) {
+      if (bot !== connectedBot || !connectedBot) return;
       try {
-        if (isWhisper) bot.whisper(player, line);
-        else bot.chat(line);
+        if (isWhisper) connectedBot.whisper(player, line);
+        else connectedBot.chat(line);
       } catch (err) {
         log.warn('发送失败（可能掉线了）：', err.message);
         return;

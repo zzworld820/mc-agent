@@ -27,11 +27,13 @@ const LOW_OXYGEN = 10;
  * @param {{ bot: import('mineflayer').Bot, tasks: object, owner?: string|null, isWhisper?: boolean }} params
  */
 export function startAutonomy({ bot, tasks, owner = null, isWhisper = false, mode = 'survival' }) {
+  if (bot.autonomyOptions?.manualControl) return '当前仅执行玩家指令，自主生存已停用';
   if (bot.autonomyOptions?.allowDig === false) return '自主采集已被 NPC_ALLOW_DIG=false 关闭，不能启动建设型自主生存';
-  if (['survival', 'milestones'].includes(mode)) bot.activeAutonomyMode = mode;
-  if (mode === 'survival') return startSurvival({ bot, tasks, owner, isWhisper });
-  if (mode !== 'milestones') return '不支持的自主模式，使用 survival 或 milestones';
-  if (tasks.current?.kind === 'autonomy') return `已经在自主发育了：${tasks.describe()}`;
+  if (!['survival', 'ai', 'milestones'].includes(mode)) return '不支持的自主模式，使用 survival、ai 或 milestones';
+  if (tasks.current?.kind === 'autonomy' && bot.activeAutonomyMode === mode) return `自主任务已在运行：${tasks.describe()}`;
+  if (mode === 'ai' && !bot.survivalPlanner) return '该入口尚未挂载 AI 生存规划器';
+  bot.activeAutonomyMode = mode;
+  if (mode !== 'milestones') return startSurvival({ bot, tasks, owner, isWhisper, planner: mode === 'ai' ? bot.survivalPlanner : null });
   tasks.start({ label: '自主发育', kind: 'autonomy', owner, isWhisper, report: 'always' }, (task) => run(bot, task));
   return '开始自主发育：从砍树开始，一步步往铁器、钻石发展';
 }

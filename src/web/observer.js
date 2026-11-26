@@ -25,7 +25,7 @@ export function constructionMaterials(blocks, inventory, facilities, targets) {
   });
 }
 
-const EXPECTED_WAITS = new Set(['night', 'maintain', 'bind_home', 'supply_wait', 'recover']);
+const EXPECTED_WAITS = new Set(['night', 'maintain', 'bind_home', 'supply_wait', 'planning_wait', 'recover']);
 const TWO_GAME_DAYS = 48000;
 
 export function trackTaskProgress(previous, { activeTask, tick, fingerprint, waiting }) {

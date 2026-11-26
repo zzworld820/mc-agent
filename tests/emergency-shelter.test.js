@@ -70,3 +70,47 @@ test('仅在白天清理档案中自建洞口的已知堵塞材料', async () =>
   assert.equal(blocked.size, 0);
   assert.equal(open, false);
 });
+
+test('应急坑出口记录允许在井口七格外安全站稳后清除', async () => {
+  const surface = { x: -148, y: 67, z: 106 };
+  const state = { emergencyShelter: { kind: 'pit', dimension: 'overworld', surface, depth: 3, exiting: true } };
+  const bot = {
+    game: { dimension: 'overworld' }, time: { timeOfDay: 7509 },
+    entity: { position: new Vec3(-147.56, 67, 113.38), onGround: true },
+    blockAt(p) { return p.y < 67 ? { name: 'grass_block', boundingBox: 'block' } : { name: 'air' }; },
+  };
+  let saved = false;
+  const ctx = { bot, state, signal: new AbortController().signal, log() {}, checkpoint: async () => {
+    assert.equal(state.emergencyShelter, undefined);
+    saved = true;
+  } };
+  assert.equal(await hideUntilMorning(ctx), true);
+  assert.equal(saved, true);
+});
+
+test('井外仍在下落、脚下未加载或是危险方块时不清除档案', async () => {
+  for (const [onGround, floor] of [[false, 'grass_block'], [true, null], [true, 'magma_block']]) {
+    const shelter = { kind: 'pit', dimension: 'overworld', surface: { x: 0, y: 65, z: 0 }, depth: 3, exiting: true };
+    const state = { emergencyShelter: shelter };
+    const bot = {
+      game: { dimension: 'overworld' }, time: { timeOfDay: 1000 },
+      entity: { position: new Vec3(6.5, 65, 0.5), onGround },
+      blockAt(p) { return p.y < 65 ? floor && { name: floor, boundingBox: 'block' } : { name: 'air' }; },
+    };
+    await assert.rejects(hideUntilMorning({ bot, state, signal: new AbortController().signal, log() {} }), /安全落脚点/);
+    assert.equal(state.emergencyShelter, shelter);
+  }
+});
+
+test('已经出坑但天仍黑时，丢弃旧井状态并继续检查新掩体', async () => {
+  const state = { emergencyShelter: { kind: 'pit', dimension: 'overworld',
+    surface: { x: 0, y: 65, z: 0 }, depth: 3, exiting: true } };
+  const bot = {
+    game: { dimension: 'overworld' }, time: { timeOfDay: 15000 },
+    entity: { position: new Vec3(6.5, 65, 0.5), onGround: true },
+    inventory: { items: () => [] },
+    blockAt(p) { return p.y < 65 ? { name: 'stone', boundingBox: 'block', canHarvest: () => false } : { name: 'air' }; },
+  };
+  assert.equal(await hideUntilMorning({ bot, state, signal: new AbortController().signal, log() {} }), false);
+  assert.equal(state.emergencyShelter, undefined);
+});

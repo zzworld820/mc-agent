@@ -15,10 +15,10 @@ function usableTool(bot, name) {
   });
 }
 
-export function shouldPauseForSupplies(bot, state, goal, essentialStep = false) {
+export function shouldPauseForSupplies(bot, state, goal, essentialStep = false, task = state.supplies?.activeTask || {}) {
   if (['food', 'eat', 'recover', 'supply_wait', 'defend', 'escape'].includes(goal)) return false;
-  const assessment = assessSupplies(bot, state, state.supplies?.activeTask || {});
-  if (state.supplies?.activeTask?.constructionHome) return assessment.interrupt;
+  const assessment = assessSupplies(bot, state, task);
+  if (task.constructionHome) return assessment.interrupt;
   if (essentialStep || goal === 'night') return assessment.needsMeal && assessment.mealAvailable || bot.food < supplySettings(bot).interruptBelow;
   return assessment.interrupt;
 }

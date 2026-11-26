@@ -130,7 +130,7 @@ function connect(){
   }
   if(config.web.enabled){
    if(!web){
-    web=await startWebService({actions,llm:config.llm,npc:{...config.npc,autonomy:'auto'},
+    web=await startWebService({actions,llm:config.llm,npc:{...config.npc,autonomy:'auto',manualControl:false},
      options:{...config.web,getRunStatus:()=>status}});
     console.log(`Web 监控与对话 ${web.url}`);
    }

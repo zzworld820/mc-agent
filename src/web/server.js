@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createObserver } from './observer.js';
 import { createWebController } from './controller.js';
 import { createAgentJournal } from './journal.js';
+import { createProjectDashboard } from './projects.js';
 import { createViewerService } from './viewer.js';
 
 const require = createRequire(import.meta.url);
@@ -23,15 +24,17 @@ function mountInventoryTextures(app) {
   app.get('/item-atlas.png', (req, res) => res.sendFile(assetRoot + 'textures/1.21.4.png', { maxAge: '1d' }));
 }
 
-function mountAgent(app, server, { id, actions, llm, npc, options = {} }, settings, legacy) {
+function mountAgent(app, server, { id, actions, llm, npc, controller: sharedController, options = {} }, settings, legacy) {
   const router = express.Router();
   const clients = new Set();
   const observer = createObserver(actions);
-  const controller = createWebController({ actions, llm, npc,
-    storageDirectory: new URL('../../data/web/', import.meta.url),
+  const controller = sharedController ?? createWebController({ actions, llm, npc,
+    storageDirectory: options.controllerDirectory ?? new URL('../../data/web/', import.meta.url),
     priorities: { temporary: settings.temporaryPriority, primary: settings.primaryPriority } });
+  const projects = createProjectDashboard({ npc, llm, controller, actions, storage: options.projectStorage });
   const viewer = createViewerService({ app, server, viewDistance: settings.viewDistance, prefix: legacy ? '/viewer' : `/viewers/${id}` });
   let snapshot = { connected: false, inventory: [], chests: [], failures: {}, viewer: viewer.status() };
+  let projectSnapshot = null;
   let sampling = false;
   let closed = false;
   const secret = llm.apiKey || '';
@@ -46,7 +49,7 @@ function mountAgent(app, server, { id, actions, llm, npc, options = {} }, settin
   let detachJournal = () => {};
   const state = () => {
     const { messages, ...missions } = controller.snapshot();
-    return safe({ ...snapshot, missions, messages, incidents: journal.snapshot(), viewer: viewer.status() });
+    return safe({ ...snapshot, projects: projectSnapshot, missions, messages, incidents: journal.snapshot(), viewer: viewer.status() });
   };
   function broadcast() {
     const payload = `event: state\ndata: ${JSON.stringify(state())}\n\n`;
@@ -59,6 +62,7 @@ function mountAgent(app, server, { id, actions, llm, npc, options = {} }, settin
     if (sampling || closed) return;
     sampling = true;
     try {
+      projectSnapshot = await projects.snapshot();
       snapshot = await observer.sample(options.getRunStatus?.() || {});
       if (snapshot.connected && snapshot.diagnostics?.newStall) {
         await journal.record({ type: 'stall', goal: snapshot.task.goal ?? snapshot.task.label,
@@ -91,6 +95,14 @@ function mountAgent(app, server, { id, actions, llm, npc, options = {} }, settin
     return controller.send(message.trim(), mode);
   });
   post('/temporary/cancel', ({ id }) => controller.cancelTemporary(id));
+  const projectPost = (path, work) => post(path, async data => {
+    const response = await work(data);
+    projectSnapshot = await projects.snapshot();
+    broadcast();
+    return safe(response);
+  });
+  projectPost('/projects', projects.create);
+  projectPost('/projects/action', projects.operate);
   post('/primary', ({ operation }) => controller.setPrimary(operation));
   post('/priorities', (priorities) => controller.setPriorities(priorities));
   router.use((error, req, res, next) => {
@@ -115,8 +127,9 @@ function mountAgent(app, server, { id, actions, llm, npc, options = {} }, settin
         dimension: String(bot.game?.dimension), position: bot.entity?.position });
       bot.on('agentIncident', record);
       detachJournal = () => bot.removeListener('agentIncident', record);
+      projects.attach(bot);
       await observer.attach(bot);
-      await controller.attach(bot);
+      if (!sharedController) await controller.attach(bot);
       await viewer.attach(bot);
       await sample();
     },
@@ -127,7 +140,8 @@ function mountAgent(app, server, { id, actions, llm, npc, options = {} }, settin
       await journal.flush();
       for (const client of clients) client.end();
       clients.clear();
-      await controller.close(); await viewer.close();
+      if (!sharedController) await controller.close();
+      await viewer.close();
     },
   };
 }
@@ -160,7 +174,7 @@ export async function startWebService({ actions, llm, npc, agents, options = {} 
   app.use(express.static(fileURLToPath(new URL('./public/', import.meta.url)), { index: 'index.html', dotfiles: 'deny' }));
   app.use((error, req, res, next) => {
     if (res.headersSent) return next(error);
-    res.status(error.status === 413 ? 413 : 400).json({ error: safe(error.message || '网页请求处理失败') });
+    res.status(error.status === 413 ? 413 : 400).json({ error: '网页请求格式无效或超过大小限制' });
   });
   try {
     await new Promise((resolve, reject) => {

@@ -47,9 +47,9 @@ const ACTION_GROUPS = [
   { actions: itemActions },
   { actions: gatheringActions, enabled: (options) => options.allowDig },
   { actions: combatActions, enabled: (options) => options.allowCombat },
-  { actions: buildingActions, enabled: (options) => options.allowAutonomy },
-  { actions: farmingActions, enabled: (options) => options.allowAutonomy },
-  { actions: supplyActions, enabled: (options) => options.allowAutonomy },
+  { actions: buildingActions, enabled: (options) => options.manualControl ? options.allowDig : options.allowAutonomy },
+  { actions: farmingActions, enabled: (options) => options.manualControl ? options.allowDig : options.allowAutonomy },
+  { actions: supplyActions, enabled: (options) => options.manualControl || options.allowAutonomy },
   { actions: autonomyActions, enabled: (options) => options.allowAutonomy },
 ];
 
@@ -73,7 +73,7 @@ export function createActionRegistry(options) {
     execute(task, work) {
       const progress = task.setProgress;
       task.setProgress = (text) => { progress(text); bot.emit('agentProgress', { kind: task.kind, label: task.label, text }); };
-      return runSuppliedTask(bot, task, work);
+      return options.manualControl ? work(task) : runSuppliedTask(bot, task, work);
     },
     onStart(task) {
       if (!bot?.memory?.enabled) return;
@@ -111,9 +111,9 @@ export function createActionRegistry(options) {
     attach(newBot) {
       tasks.cancel('重新进服');
       bot = newBot;
-      bot.autonomyOptions = { allowDig: options.allowDig, allowCombat: options.allowCombat, allowAutonomy: options.allowAutonomy };
+      bot.autonomyOptions = { allowDig: options.allowDig, allowCombat: options.allowCombat, allowAutonomy: options.allowAutonomy, manualControl: options.manualControl };
       setupPathfinder(bot);
-      setupSurvival(bot, { tasks, allowCombat: options.allowCombat });
+      setupSurvival(bot, { tasks, allowCombat: options.allowCombat, automatic: !options.manualControl });
     },
 
     /** 发给大模型的工具清单（OpenAI 的 tools 格式） */

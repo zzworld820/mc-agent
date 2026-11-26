@@ -34,6 +34,7 @@
     <nav class="nav-list">
       <a class="nav-link is-active" href="#overview"><svg class="icon"><use href="#i-grid"/></svg>运行概览<span class="nav-indicator"></span></a>
       <a class="nav-link" href="#missions"><svg class="icon"><use href="#i-target"/></svg>任务与进度</a>
+      <a class="nav-link" href="#projects"><svg class="icon"><use href="#i-box"/></svg>持久化工程</a>
       <a class="nav-link" href="#storage"><svg class="icon"><use href="#i-box"/></svg>背包与仓储</a>
       <a class="nav-link" href="#safety"><svg class="icon"><use href="#i-shield"/></svg>危险与卡点<span id="nav-alert-count" class="nav-count" hidden>0</span></a>
       <a class="nav-link" href="#conversation"><svg class="icon"><use href="#i-chat"/></svg>指令与对话</a>
@@ -58,9 +59,50 @@
         <div class="main-column">
           <section id="missions" class="panel mission-panel" aria-labelledby="missions-title">
             <div class="panel-heading"><div><h2 id="missions-title">任务控制台</h2></div><span id="task-status" class="tag">等待同步</span></div>
-            <article class="primary-mission"><div class="mission-topline"><span class="mission-label"><span class="small-square"></span>主任务</span><span id="primary-status" class="tag tag-blue">状态未知</span></div><h3 id="primary-label">等待主任务</h3><p id="primary-detail" class="muted">连接后显示已保存的主任务与恢复状态。</p><div class="progress-line"><span id="task-label">当前执行：未知</span><strong id="task-percent">进度未知</strong></div><div class="meter task-meter" role="progressbar" aria-label="任务进度" aria-valuemin="0" aria-valuemax="100"><span id="task-bar"></span></div><div class="primary-footer"><span id="primary-preservation" class="preservation-note">保存 / 恢复状态未知</span><div class="button-group"><button id="pause-primary" class="button button-outline button-small" type="button" disabled><svg class="icon"><use href="#i-pause"/></svg>暂停主任务</button><button id="resume-primary" class="button button-primary button-small" type="button" disabled>恢复主任务<svg class="icon"><use href="#i-arrow"/></svg></button></div></div></article>
-            <div class="temporary-heading"><h3>临时任务 <span id="temporary-count" class="count">—</span></h3><span class="muted">结束后自动恢复主任务</span></div><div id="temporary-list" class="temporary-list"><p class="empty-state">等待临时任务数据</p></div>
-            <details class="mission-settings"><summary>队列与执行优先级 <span id="queue-count" class="muted">等待同步</span></summary><div id="queue-list" class="queue-list"></div><form id="priorities-form" class="priorities-form"><label>临时任务<input id="temporary-priority" type="number" min="0" max="100" step="1" value="80" required></label><label>主任务<input id="primary-priority" type="number" min="0" max="100" step="1" value="50" required></label><button id="save-priorities" class="button button-outline button-small" type="submit" disabled>保存优先级</button><p id="priority-note" class="muted">当前值未知；默认临时 80 / 主任务 50，数值越大越优先。</p></form></details>
+            <article class="primary-mission"><div class="mission-topline"><span class="mission-label"><span class="small-square"></span><span id="primary-caption">主任务</span></span><span id="primary-status" class="tag tag-blue">状态未知</span></div><h3 id="primary-label">等待主任务</h3><p id="primary-detail" class="muted">连接后显示已保存的主任务与恢复状态。</p><div class="progress-line"><span id="task-label">当前执行：未知</span><strong id="task-percent">进度未知</strong></div><div class="meter task-meter" role="progressbar" aria-label="任务进度" aria-valuemin="0" aria-valuemax="100"><span id="task-bar"></span></div><div class="primary-footer"><span id="primary-preservation" class="preservation-note">保存 / 恢复状态未知</span><div class="button-group"><button id="pause-primary" class="button button-outline button-small" type="button" disabled><svg class="icon"><use href="#i-pause"/></svg>暂停主任务</button><button id="resume-primary" class="button button-primary button-small" type="button" disabled>恢复主任务<svg class="icon"><use href="#i-arrow"/></svg></button></div></div></article>
+            <div class="temporary-heading"><h3><span id="queue-heading">临时任务</span> <span id="temporary-count" class="count">—</span></h3><span id="temporary-policy" class="muted">等待任务状态</span></div><div id="temporary-list" class="temporary-list"><p class="empty-state">等待临时任务数据</p></div>
+            <details class="mission-settings"><summary><span id="queue-settings-label">队列与执行优先级</span> <span id="queue-count" class="muted">等待同步</span></summary><div id="queue-list" class="queue-list"></div><form id="priorities-form" class="priorities-form"><label>临时任务<input id="temporary-priority" type="number" min="0" max="100" step="1" value="80" required></label><label>主任务<input id="primary-priority" type="number" min="0" max="100" step="1" value="50" required></label><button id="save-priorities" class="button button-outline button-small" type="submit" disabled>保存优先级</button><p id="priority-note" class="muted">当前值未知；默认临时 80 / 主任务 50，数值越大越优先。</p></form></details>
+          </section>
+
+          <section id="projects" class="panel project-panel" aria-labelledby="projects-title">
+            <div class="panel-heading"><h2 id="projects-title">持久化工程</h2><span id="project-status" class="tag">等待同步</span></div>
+            <p id="project-empty" class="empty-state compact">等待工程记录</p>
+            <article id="project-active" hidden>
+              <header class="project-heading"><h3 id="project-objective"></h3><span id="project-count" class="tag"></span></header>
+              <p id="project-options" class="muted"></p>
+              <div class="meter task-meter project-meter" role="progressbar" aria-label="工程验收进度" aria-valuemin="0"><span id="project-bar"></span></div>
+              <div id="project-execution" class="project-execution"></div>
+              <ol id="project-steps" class="project-steps" aria-label="工程验收步骤"></ol>
+              <div class="button-group project-actions">
+                <button id="project-pause" class="button button-outline button-small" type="button">暂停工程</button>
+                <button id="project-resume" class="button button-primary button-small" type="button">恢复 / 重试</button>
+                <button id="project-cancel" class="button button-outline button-small" type="button">取消工程</button>
+              </div>
+              <details id="project-activity" class="mission-settings" hidden><summary>执行记录</summary><div id="project-activity-list" class="event-list"></div></details>
+            </article>
+            <p id="project-availability" class="helper-text" role="status" hidden></p>
+            <details id="project-create" class="mission-settings" hidden>
+              <summary>新建工程</summary>
+              <form id="project-form" class="project-form">
+                <label class="project-full">工程目标<textarea id="project-request" maxlength="500" rows="2" placeholder="例如 盖一座两层房屋，装四个箱子和两个熔炉" required></textarea></label>
+                <label>工程类型<select id="project-kind"><option value="house">房屋</option><option value="farm">农田</option></select></label>
+                <fieldset id="project-house" class="project-fields">
+                  <label>施工方式<select id="project-house-mode"><option value="build">建造新房</option><option value="expand">给现有房屋加层</option></select></label>
+                  <label>模型 ID<input id="project-model" placeholder="starter" maxlength="60"></label>
+                  <label>总层数<input id="project-floors" type="number" min="1" max="3" value="1" required></label>
+                  <label>箱子数量<input id="project-chests" type="number" min="1" max="8" placeholder="按模型"></label>
+                  <label>熔炉数量<input id="project-furnaces" type="number" min="1" max="12" placeholder="按模型"></label>
+                </fieldset>
+                <fieldset id="project-farm" class="project-fields" disabled hidden>
+                  <label>目标宽度<input id="project-width" type="number" min="2" max="15" value="5" required></label>
+                  <label>目标长度<input id="project-depth" type="number" min="2" max="15" value="4" required></label>
+                  <label>作物<select id="project-crop"><option value="wheat">小麦</option><option value="potatoes">马铃薯</option><option value="beetroots">甜菜</option><option value="carrots">胡萝卜</option></select></label>
+                  <label class="project-checkbox"><input id="project-harvest" type="checkbox">要求一轮收割并补种</label>
+                </fieldset>
+                <button id="project-submit" class="button button-primary button-small" type="submit" disabled>创建工程</button>
+              </form>
+            </details>
+            <details id="project-history" class="mission-settings" hidden><summary>最近工程</summary><div id="project-history-list" class="event-list"></div></details>
           </section>
 
           <section class="panel" aria-labelledby="progress-title"><div class="panel-heading"><div><h2 id="progress-title">目标推进</h2></div><span id="stage-label" class="tag">阶段未知</span></div><div class="next-step"><span class="step-arrow">↗</span><div><span class="eyebrow">下一步</span><p id="next-step">等待规划数据</p></div></div><div id="task-stage" class="task-stage" hidden></div><ol id="checkpoints" class="checkpoints"><li class="empty-state">检查点未知</li></ol><div class="progress-summary"><div><span>已完成</span><strong id="completed-value">未知</strong></div><div><span>待完成</span><strong id="remaining-value">未知</strong></div><div><span>主体匹配</span><strong id="construction-value">未知</strong></div><div><span>收尾待处理</span><strong id="finishing-value">未知</strong></div></div><div class="acceptance-section"><div class="section-heading"><h3>建筑验收</h3><span id="construction-status" class="tag">验收未知</span></div><p id="construction-note" class="helper-text">床、箱子、熔炉、工作台逐项验收</p><div id="facilities-list" class="facilities-grid"></div><div id="base-work" class="event-list" hidden></div></div><p id="materials-note" class="helper-text">材料进度未知，等待后端提供材料数量。</p><div id="materials-list" class="materials-list"></div></section>
@@ -73,7 +115,7 @@
 
           <section id="safety" class="panel" aria-labelledby="safety-title"><div class="panel-heading"><div><h2 id="safety-title">危险与卡点</h2></div><span id="safety-status" class="tag">未知</span></div><div class="diagnostics"><div class="diagnostic-top"><span>无实质进展</span><strong id="no-progress-time">未知</strong><span id="stalled-status" class="tag">卡点未知</span></div><dl class="diagnostic-grid"><div><dt>寻路状态</dt><dd id="navigation-status">未知</dd></div><div><dt>路径 / 轨迹</dt><dd id="path-summary">未知</dd></div><div><dt>访问节点</dt><dd id="navigation-nodes">未知</dd></div><div><dt>目标坐标</dt><dd id="navigation-goal">未知</dd></div></dl></div><div class="safety-section"><h3><svg class="icon"><use href="#i-shield"/></svg>危险监测 <span id="danger-count" class="count">—</span></h3><div id="danger-list" class="event-list"><p class="empty-state compact">等待危险数据</p></div></div><div class="safety-section"><h3><svg class="icon"><use href="#i-pin"/></svg>失败与卡点 <span id="failure-count" class="count">—</span></h3><div id="failure-list" class="event-list"><p class="empty-state compact">等待失败记录</p></div></div><details class="incident-panel" open><summary>卡顿与处理历史</summary><p id="incident-write-error" class="notice" hidden>部分记录未能写入磁盘</p><div id="incident-list" class="event-list"></div></details></section>
 
-          <section id="conversation" class="panel chat-panel" aria-labelledby="conversation-title"><div class="panel-heading"><div><h2 id="conversation-title">指令与对话</h2></div><span class="tag tag-blue">Web 频道</span></div><div id="message-list" class="message-list" role="log" aria-label="对话记录" aria-live="polite" aria-relevant="additions"><div class="chat-welcome"><span class="chat-welcome-mark">方</span><strong>暂无对话记录</strong><p>对话只读；临时任务会抢占主任务，结束后自动恢复。</p></div></div><form id="chat-form" class="chat-composer"><div class="composer-heading"><div class="segmented" role="group" aria-label="发送模式"><button id="mode-chat" class="segment is-active" type="button" aria-pressed="true">对话</button><button id="mode-task" class="segment" type="button" aria-pressed="false">临时任务</button></div><span id="chat-mode-hint" class="muted">询问状态或交流</span></div><label class="sr-only" for="chat-input">消息内容</label><textarea id="chat-input" rows="3" maxlength="4000" placeholder="问问进展，或切换到临时任务…" required></textarea><div class="composer-footer"><span class="muted">Enter 发送 · Shift + Enter 换行</span><button id="send-message" class="button button-primary" type="submit">发送<svg class="icon"><use href="#i-send"/></svg></button></div><p id="chat-feedback" class="form-feedback" role="status"></p></form></section>
+          <section id="conversation" class="panel chat-panel" aria-labelledby="conversation-title"><div class="panel-heading"><div><h2 id="conversation-title">指令与对话</h2></div><span class="tag tag-blue">Web 频道</span></div><div id="message-list" class="message-list" role="log" aria-label="对话记录" aria-live="polite" aria-relevant="additions"><div class="chat-welcome"><span class="chat-welcome-mark">方</span><strong>暂无对话记录</strong><p>切换到「临时任务」可以下达执行指令。</p></div></div><form id="chat-form" class="chat-composer"><div class="composer-heading"><div id="chat-mode-buttons" class="segmented" role="group" aria-label="发送模式"><button id="mode-chat" class="segment is-active" type="button" aria-pressed="true">对话</button><button id="mode-task" class="segment" type="button" aria-pressed="false">临时任务</button></div><span id="chat-mode-hint" class="muted">询问状态或交流</span></div><label class="sr-only" for="chat-input">消息内容</label><textarea id="chat-input" rows="3" maxlength="4000" placeholder="问问进展，或切换到临时任务…" required></textarea><div class="composer-footer"><span class="muted">Enter 发送 · Shift + Enter 换行</span><button id="send-message" class="button button-primary" type="submit">发送<svg class="icon"><use href="#i-send"/></svg></button></div><p id="chat-feedback" class="form-feedback" role="status"></p></form></section>
         </div>
       </div>
       <footer class="page-footer"><span>方舟 · Minecraft Agent 监控台</span><span>快照经 SSE 实时同步 <span class="footer-dot">·</span> <span id="footer-updated">尚未收到数据</span></span></footer>

@@ -9,5 +9,6 @@
 process.env.MC_HOST = process.env.SURVIVE_HOST ?? 'localhost';
 process.env.MC_PORT = process.env.SURVIVE_PORT ?? '25565';
 process.env.NPC_AUTONOMY = 'auto';
+process.env.NPC_MANUAL_CONTROL = 'false';
 
 await import('../src/index.js');

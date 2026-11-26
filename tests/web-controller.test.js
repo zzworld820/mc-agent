@@ -572,3 +572,79 @@ test('primary resume failures are explicit, redacted, and do not strand an activ
   assert.equal(controller.snapshot().primary.pausedBy, null);
   assert.match(controller.snapshot().primary.text, /恢复失败.*REDACTED/);
 });
+
+test('manual mode gives game and ordinary Web conversation the same executable FIFO queue', async (t) => {
+  const pendingSkill = deferred();
+  const f = await fixture(t, {
+    npc: { manualControl: true, autonomy: 'auto' },
+    risk: { value: { retreat: true, reasons: ['测试危险感知只上报'] } },
+    loop: async ({ actions, context, messages }) => {
+      const names = actions.toolDefinitions.map(tool => tool.function.name);
+      assert.ok(names.includes('collect_block'));
+      assert.ok(!names.includes('start_autonomy'));
+      assert.match(messages[0].content, /完成或失败后待命/);
+      if (context.source === 'game') {
+        assert.equal(context.player, 'Player');
+        const result = await actions.run('collect_block', { block: 'oak_log' });
+        assert.match(result, /实际木料/);
+        return '实际采到了木头';
+      }
+      assert.equal(context.player, 'web');
+      return actions.run('go_to', { x: 2, y: 64, z: 0 });
+    },
+  });
+  f.background('collect_block', pendingSkill);
+  f.implementations.set('go_to', () => '已到达');
+  const replies = [];
+  const game = await f.controller.sendGame('砍木头', { player: 'Player', isWhisper: true, reply: value => replies.push(value) });
+  await until(() => f.tasks.current?.missionId === game.id);
+  const web = await f.controller.send('走到 2 64 0', 'chat');
+  assert.deepEqual(f.controller.snapshot().queue.map(item => item.id), [web.id]);
+  assert.deepEqual(f.events.filter(event => event.type === 'tool').map(event => event.name), ['collect_block']);
+  pendingSkill.resolve('实际木料 oak_log ×4');
+  await f.controller.waitIdle();
+  const snapshot = f.controller.snapshot();
+  assert.equal(snapshot.manual, true);
+  assert.equal(snapshot.primary.enabled, false);
+  assert.deepEqual(snapshot.priorities, { temporary: 100, primary: 0 });
+  assert.deepEqual(snapshot.temporary.map(item => [item.source, item.status]), [['game', 'completed'], ['web', 'completed']]);
+  assert.deepEqual(replies, ['实际采到了木头']);
+  assert.equal(f.starts.length, 0);
+  assert.equal(f.tasks.current, null);
+  await assert.rejects(f.controller.setPrimary('resume'), /自主生存已停用/);
+});
+
+test('manual stop cancels both an executing game skill and queued Web instructions', async (t) => {
+  const held = deferred();
+  const f = await fixture(t, { npc: { manualControl: true },
+    loop: ({ actions }) => actions.run('go_to', {}) });
+  f.background('go_to', held);
+  const game = await f.controller.sendGame('跟我走', { player: 'Player', reply() {} });
+  await until(() => f.tasks.current?.missionId === game.id);
+  await f.controller.send('去树边');
+  await f.controller.send('停下');
+  await f.controller.waitIdle();
+  assert.deepEqual(f.controller.snapshot().temporary.map(item => item.status), ['cancelled', 'cancelled']);
+  assert.equal(f.tasks.current, null);
+  assert.equal(f.starts.length, 0);
+});
+
+test('manual startup overrides an earlier autonomous setting without discarding command history', async t => {
+  const f = await fixture(t, { npc: { manualControl: true, autonomy: 'auto' } });
+  const created = await f.controller.send('查一下背包');
+  await f.controller.waitIdle();
+  await f.controller.close();
+  const [file] = await readdir(f.directory);
+  const fullPath = join(f.directory, file);
+  const old = JSON.parse(await readFile(fullPath, 'utf8'));
+  old.primary = { ...old.primary, enabled: true, mode: 'ai', pausedBy: null, status: 'running' };
+  old.priorities = { temporary: 30, primary: 90 };
+  await writeFile(fullPath, JSON.stringify(old));
+  const reopened = await fixture(t, { directory: f.directory, npc: { manualControl: true } });
+  const current = reopened.controller.snapshot();
+  assert.equal(current.primary.mode, 'manual');
+  assert.equal(current.primary.enabled, false);
+  assert.deepEqual(current.priorities, { temporary: 100, primary: 0 });
+  assert.ok(current.temporary.some(entry => entry.id === created.id));
+  assert.equal(reopened.starts.length, 0);
+});

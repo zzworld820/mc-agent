@@ -10,6 +10,7 @@ import { readDanger } from '../strategy/danger.js';
 const READ_ONLY = new Set(['assess_danger', 'get_world_state', 'scan_environment', 'look_around', 'find_block', 'check_inventory']);
 const FORBIDDEN = /(?:autonomy|chat|whisper)|^(?:stop|say|tell|send_message|send_command|command)$/i;
 const UNFINISHED = new Set(['queued', 'running', 'cancelling']);
+const STOP_COMMAND = /^(?:请)?(?:停|停下|停止|暂停|别动|站住|别砍|别挖|别打|别跟|不要跟|stop)[。！!.\s]*$/i;
 const DEFAULT_DIRECTORY = new URL('../../data/web/', import.meta.url);
 
 function abortError() {
@@ -42,6 +43,7 @@ export function createWebController({ actions, llm = {}, npc = {}, storageDirect
   if (typeof actions?.tasks?.onSettled !== 'function') {
     throw new Error('Web controller 需要 tasks.onSettled(fn) 接口');
   }
+  const manual = npc.manualControl === true;
   const think = dependencies.runAgentLoop ?? runAgentLoop;
   const start = dependencies.startAutonomy ?? startAutonomy;
   const danger = dependencies.readDanger ?? readDanger;
@@ -76,6 +78,10 @@ export function createWebController({ actions, llm = {}, npc = {}, storageDirect
   }
 
   function initialState() {
+    if (manual) return {
+      primary: { id: 'primary', enabled: false, mode: 'manual', label: '指令模式', text: '等待游戏或网页指令', status: 'paused', pausedBy: 'user' },
+      temporary: [], priorities: { temporary: 100, primary: 0 }, messages: [],
+    };
     const mode = npc.autonomyMode ?? 'survival';
     const label = mode === 'milestones' ? '自主发育' : '自主生存';
     return {
@@ -103,10 +109,11 @@ export function createWebController({ actions, llm = {}, npc = {}, storageDirect
   }
 
   function owns(runtime, task) {
-    return task?.source === 'web' && task.missionId === runtime.id;
+    return Boolean(task && task.source === (runtime.mission?.source || 'web') && task.missionId === runtime.id);
   }
 
   function capturePrimary(session, task) {
+    if (manual) return false;
     const primary = session.state.primary;
     const previous = JSON.stringify(primary);
     primary.enabled = true;
@@ -129,6 +136,7 @@ export function createWebController({ actions, llm = {}, npc = {}, storageDirect
   }
 
   function emergencyReason(session) {
+    if (manual) return session.bot.health <= 0 ? 'Agent 正在等待重生' : null;
     if (session.bot.health <= 6) return `生命值 ${session.bot.health} <= 6，优先生存避险`;
     try {
       const risk = danger(session.bot);
@@ -167,7 +175,7 @@ export function createWebController({ actions, llm = {}, npc = {}, storageDirect
     const result = clean(state);
     if (session && live(session)) {
       const task = actions.tasks.current;
-      if (task?.kind === 'autonomy') {
+      if (!manual && task?.kind === 'autonomy') {
         session.primaryTask = task;
         result.primary.status = 'running';
         result.primary.text = redact(task.progress || task.label);
@@ -176,9 +184,10 @@ export function createWebController({ actions, llm = {}, npc = {}, storageDirect
         if (mission && task.progress) mission.text = redact(task.progress);
       }
     }
-    return { primary: result.primary, temporary: result.temporary,
+    const gameIds = new Set(result.temporary.filter(mission => mission.source === 'game').map(mission => mission.id));
+    return { manual, primary: result.primary, temporary: result.temporary,
       queue: result.temporary.filter((mission) => mission.status === 'queued'),
-      priorities: result.priorities, messages: result.messages };
+      priorities: result.priorities, messages: result.messages.filter(message => !gameIds.has(message.missionId)) };
   }
 
   function notify() {
@@ -239,7 +248,8 @@ export function createWebController({ actions, llm = {}, npc = {}, storageDirect
     outcomes.set(task, safe);
     for (const resolve of waiters.get(task) ?? []) resolve(safe);
     waiters.delete(task);
-    const runtime = task.source === 'web' ? runtimes.get(task.missionId) : null;
+    const candidate = runtimes.get(task.missionId);
+    const runtime = candidate && owns(candidate, task) ? candidate : null;
     if (runtime) {
       runtime.tasks.add(task);
       runtime.call?.events.push(safe);
@@ -296,7 +306,10 @@ export function createWebController({ actions, llm = {}, npc = {}, storageDirect
   }
 
   function makeRuntime(session, id, mission = null) {
-    const runtime = { session, id, mission, controller: new AbortController(), tasks: new Set(), rawCalls: new Set(),
+    const command = session.gameCommands.get(id);
+    const context = { player: command?.player || 'web', isWhisper: command?.isWhisper ?? true,
+      source: mission?.source || 'web', missionId: id };
+    const runtime = { session, id, mission, command, context, controller: new AbortController(), tasks: new Set(), rawCalls: new Set(),
       failures: [], toolCount: 0, call: null, desiredStatus: null, resume: false };
     runtimes.set(id, runtime);
     return runtime;
@@ -342,8 +355,7 @@ export function createWebController({ actions, llm = {}, npc = {}, storageDirect
         const call = { events: [] };
         runtime.call = call;
         runtime.toolCount += 1;
-        const context = { player: 'web', isWhisper: true, source: 'web', missionId: runtime.id,
-          signal: runtime.controller.signal };
+        const context = { ...runtime.context, signal: runtime.controller.signal };
         try {
           // agentLoop logs args after run returns; redact its original object as
           // well as the arguments passed into actions.
@@ -405,21 +417,28 @@ export function createWebController({ actions, llm = {}, npc = {}, storageDirect
     if (typeof llm.apiKey !== 'string' || !llm.apiKey.trim()) throw new Error('缺少 LLM_API_KEY，Web 无法调用大模型');
     const session = runtime.session;
     const ownIndex = session.state.messages.findIndex((message) => message.id === runtime.id);
+    const recentCommandIds = manual && runtime.mission ? new Set(session.state.temporary
+      .filter(item => ['completed', 'failed'].includes(item.status) && item.source === runtime.context.source
+        && item.requester === runtime.command?.player).slice(-3).map(item => item.id)) : new Set();
     const history = session.state.messages.filter((message, index) => mode === 'task'
-      ? message.missionId === runtime.id : !message.missionId && message.id !== runtime.id && (message.role !== 'user' || index < ownIndex));
+      ? message.missionId === runtime.id || recentCommandIds.has(message.missionId) && message.role !== 'system'
+      : !message.missionId && message.id !== runtime.id && (message.role !== 'user' || index < ownIndex));
     if (mode === 'chat') history.push(session.state.messages[ownIndex]);
     const limit = Math.max(2, Number(npc.memorySize) || 12);
     let world;
     try { world = describeWorld(session.bot, actions.describeActivity?.() ?? actions.tasks.describe?.()); }
     catch { world = '当前世界感知信息不完整，请使用感知工具核实。'; }
-    const instruction = mode === 'chat'
+    const instruction = manual
+      ? '这是玩家发给你的直接指令。根据本次消息区分提问和行动。提问就回答，需要动手就调用已有技能。当前发话者是 '
+        + runtime.context.player + '。工具会等待实际执行结果；依据工具结果如实回复。只完成本次要求，完成后原地待命。'
+      : mode === 'chat'
       ? '这是独立的 Web 只读对话。只能感知和回答，不接受行动指令，不向游戏发送聊天。'
       : '这是 Web 临时任务。主任务由 Web 调度器保留并恢复，你不能启动或停止自主任务，也不能发送游戏聊天。'
         + '工具会等待后台真实完成并返回【任务结果】，收到后对照原始请求继续下一步，全部实际完成后才报告成功；失败如实说明。';
-    const messages = [{ role: 'system', content: redact(`${buildSystemPrompt(npc.name ?? session.bot.username)}\n${instruction}\n${world}`) },
+    const messages = [{ role: 'system', content: redact(`${buildSystemPrompt(npc.name ?? session.bot.username, { manual })}\n${instruction}\n${world}`) },
       ...history.slice(mode === 'task' ? 0 : -limit).map(({ role, content }) => ({ role, content }))];
     const operation = think({ llm, actions: facade(runtime, mode), messages,
-      context: { player: 'web', isWhisper: true, source: 'web', missionId: runtime.id, signal: runtime.controller.signal } });
+      context: { ...runtime.context, signal: runtime.controller.signal } });
     const reply = await abortable(operation, runtime.controller.signal);
     assertLive(runtime);
     checkEmergency(runtime);
@@ -466,11 +485,15 @@ export function createWebController({ actions, llm = {}, npc = {}, storageDirect
     } finally {
       await cleanup(runtime);
       runtime.controller.abort('临时任务结束');
+      if (!runtime.requeue) session.gameCommands.delete(runtime.id);
       if (live(session)) {
         mission.status = runtime.requeue ? 'queued' : runtime.desiredStatus ?? (error || runtime.failures.length ? 'failed' : 'completed');
         if (!runtime.requeue) mission.finishedAt = Date.now();
         mission.text = redact(runtime.reason || error || runtime.failures.join('\n') || reply);
         if (mission.status === 'failed') mission.error = mission.text;
+        if (runtime.command && !runtime.requeue) {
+          try { runtime.command.reply(mission.text || '指令已结束'); } catch { /* Connection may have closed. */ }
+        }
         if (reply) addMessage(session, 'assistant', reply, runtime.id);
         if (error && !runtime.desiredStatus) addMessage(session, 'system', `临时任务失败：${error}`, runtime.id);
         if (runtime.failures.length) addMessage(session, 'system', `临时任务包含失败步骤：${runtime.failures.join('\n')}`, runtime.id);
@@ -561,6 +584,10 @@ export function createWebController({ actions, llm = {}, npc = {}, storageDirect
       }
       state = clean({ primary: { ...state.primary, ...saved.primary }, temporary: saved.temporary,
         priorities: { ...state.priorities, ...saved.priorities }, messages: saved.messages });
+      if (manual || saved.primary.mode === 'manual') {
+        const { primary, priorities } = initialState();
+        Object.assign(state, { primary, priorities });
+      }
       for (const mission of state.temporary) {
         if (UNFINISHED.has(mission.status)) Object.assign(mission, { status: 'interrupted',
           text: '旧连接未完成的任务已中断，不自动重放', finishedAt: Date.now() });
@@ -574,7 +601,7 @@ export function createWebController({ actions, llm = {}, npc = {}, storageDirect
       }
     }
     const session = { bot, partition: identity, partitionKey, file, state, ready, connected: true,
-      transitions: Promise.resolve(), chats: Promise.resolve(), active: null, kickPending: false, removeListeners: [] };
+      transitions: Promise.resolve(), chats: Promise.resolve(), active: null, kickPending: false, gameCommands: new Map(), removeListeners: [] };
     current = session;
     if (!state.primary.enabled) bot.autonomyStartupCancelled = true;
     if (actions.tasks.current?.kind === 'autonomy') {
@@ -609,15 +636,37 @@ export function createWebController({ actions, llm = {}, npc = {}, storageDirect
     return session;
   }
 
-  async function send(message, mode = 'chat') {
+  async function send(message, mode = 'chat', gameCommand) {
     if (typeof message !== 'string' || !message.trim()) throw new Error('消息不能为空');
     if (!['chat', 'task'].includes(mode)) throw new Error('mode 必须是 chat 或 task');
     const session = await sessionForSend();
     const id = randomUUID();
     const text = redact(message.trim());
+    if (manual && STOP_COMMAND.test(text)) {
+      const active = session.active;
+      for (const mission of session.state.temporary) {
+        if (mission.status !== 'queued') continue;
+        Object.assign(mission, { status: 'cancelled', text: '收到停止指令，已取消排队', finishedAt: Date.now() });
+        session.gameCommands.delete(mission.id);
+      }
+      if (active) {
+        active.mission.status = 'cancelling';
+        cancelRuntime(active, 'cancelled', '玩家叫停，已停止当前指令');
+      }
+      if (gameCommand) gameCommand.reply('已停止执行，等待下一条指令。');
+      else {
+        addMessage(session, 'user', text, undefined, id);
+        addMessage(session, 'assistant', '已停止执行，等待下一条指令。');
+      }
+      save(session);
+      return { id };
+    }
+    if (manual) mode = 'task';
     addMessage(session, 'user', text, mode === 'task' ? id : undefined, id);
     if (mode === 'task') {
+      if (gameCommand) session.gameCommands.set(id, gameCommand);
       session.state.temporary.push({ id, label: text.slice(0, 80), description: text, text,
+        ...(manual ? { source: gameCommand ? 'game' : 'web', requester: gameCommand?.player } : {}),
         status: 'queued', createdAt: Date.now() });
       save(session);
       kick(session);
@@ -652,7 +701,10 @@ export function createWebController({ actions, llm = {}, npc = {}, storageDirect
     if (runtime) {
       mission.status = 'cancelling';
       cancelRuntime(runtime, 'cancelled', '用户取消了临时任务');
-    } else Object.assign(mission, { status: 'cancelled', text: '用户取消了排队任务', finishedAt: Date.now() });
+    } else {
+      Object.assign(mission, { status: 'cancelled', text: '用户取消了排队任务', finishedAt: Date.now() });
+      session.gameCommands.delete(id);
+    }
     saveSafely(session);
     if (runtime) await runtime.done;
     else kick(session);
@@ -660,6 +712,7 @@ export function createWebController({ actions, llm = {}, npc = {}, storageDirect
   }
 
   async function setPrimary(operation) {
+    if (manual) throw new Error('当前是指令模式，自主生存已停用');
     if (!['pause', 'resume'].includes(operation)) throw new Error('主任务操作必须是 pause 或 resume');
     const session = await sessionForSend();
     // Publish user intent immediately, even while a preemption awaits finally.
@@ -689,6 +742,7 @@ export function createWebController({ actions, llm = {}, npc = {}, storageDirect
   }
 
   async function setPriorities(priorities) {
+    if (manual) throw new Error('游戏和 Web 指令共用同一优先级');
     if (!priorities || Object.keys(priorities).some((key) => !['temporary', 'primary'].includes(key))
       || Object.values(priorities).some((value) => typeof value !== 'number' || !Number.isFinite(value))) {
       throw new Error('优先级必须是 temporary/primary 的有限数值');
@@ -739,7 +793,9 @@ export function createWebController({ actions, llm = {}, npc = {}, storageDirect
     return closing;
   }
 
-  return { attach, send, cancelTemporary, setPrimary, setPriorities, snapshot: () => view(),
+  return { attach, send,
+    sendGame: (message, command) => send(message, 'task', command),
+    cancelTemporary, setPrimary, setPriorities, snapshot: () => view(),
     subscribe(fn) {
       if (typeof fn !== 'function') throw new Error('subscribe 需要函数');
       listeners.add(fn);

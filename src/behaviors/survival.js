@@ -28,8 +28,16 @@ const DEFEND_COOLDOWN_MS = 650;
  * @param {import('mineflayer').Bot} bot
  * @param {{ tasks: ReturnType<import('../actions/taskManager.js').createTaskManager>, allowCombat: boolean }} options
  */
-export function setupSurvival(bot, { tasks, allowCombat }) {
+export function setupSurvival(bot, { tasks, allowCombat, automatic = true }) {
   trackOwnOxygen(bot);
+  // ---- 死亡 ----
+  bot.on('death', () => {
+    lastDeaths.set(bot, { time: Date.now(), position: bot.entity.position.clone() });
+    log.warn('NPC 死了，等待重生');
+    // 自主发育自己会处理死亡（重生后回去捡东西接着做），别的任务直接取消
+    if (tasks.current?.kind !== 'autonomy') tasks.cancel('NPC 死了');
+  });
+  if (!automatic) return;
   const lifetime = new AbortController();
   bot.once('end', () => lifetime.abort('连接断开'));
 
@@ -82,13 +90,7 @@ export function setupSurvival(bot, { tasks, allowCombat }) {
       .catch(() => {});
   });
 
-  // ---- 死亡 ----
-  bot.on('death', () => {
-    lastDeaths.set(bot, { time: Date.now(), position: bot.entity.position.clone() });
-    log.warn('NPC 死了，等待重生');
-    // 自主发育自己会处理死亡（重生后回去捡东西接着做），别的任务直接取消
-    if (tasks.current?.kind !== 'autonomy') tasks.cancel('NPC 死了');
-  });
+
 }
 
 /**

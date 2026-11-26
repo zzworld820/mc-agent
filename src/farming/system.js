@@ -60,8 +60,12 @@ export function inspectFarm(bot, farm) {
   return report;
 }
 
-async function gatherSeeds(ctx) {
-  if (CROPS.some((crop) => countItem(ctx.bot, crop.seed) > 0)) return;
+async function gatherSeeds(ctx, crop) {
+  if (crop && crop.seed !== 'wheat_seeds') {
+    if (!countItem(ctx.bot, crop.seed)) await ctx.obtain(crop.seed, 1);
+    return;
+  }
+  if (crop ? countItem(ctx.bot, crop.seed) > 0 : CROPS.some(entry => countItem(ctx.bot, entry.seed) > 0)) return;
   const ids = ['short_grass', 'tall_grass', 'grass'].map((name) => ctx.bot.registry.blocksByName[name]?.id).filter((id) => id !== undefined);
   if (!ids.length) return;
   for (const p of ctx.bot.findBlocks({ matching: ids, maxDistance: 24, count: 40 })) {
@@ -245,10 +249,15 @@ async function repairInfrastructure(ctx, farm) {
 
 export async function ensureFarm(ctx, { anchor = ctx.bot.entity.position } = {}) {
   const settings = farmSettings(ctx);
+  if (ctx.project?.kind === 'farm') {
+    settings.width = ctx.project.options.width;
+    settings.depth = ctx.project.options.depth;
+  }
+  const targetCrop = CROPS.find(crop => crop.block === ctx.project?.options.crop);
   ctx.stage?.({ title: '管理农田', steps: ['准备种子', '布置农田', '种植与收割'], current: 0 });
-  await gatherSeeds(ctx);
+  if (!targetCrop || !ctx.state.farm || !inspectFarm(ctx.bot, ctx.state.farm).crops[targetCrop.block]) await gatherSeeds(ctx, targetCrop);
   if (!ctx.state.farm) {
-    if (!CROPS.some((crop) => countItem(ctx.bot, crop.seed))) return { deferred: true, reason: '未取得种植材料' };
+    if (targetCrop ? !countItem(ctx.bot, targetCrop.seed) : !CROPS.some(crop => countItem(ctx.bot, crop.seed))) return { deferred: true, reason: '未取得种植材料' };
     const site = await findSite(ctx, farmPoint(anchor), settings.width, settings.depth);
     if (!site) return { deferred: true, reason: '没有适合所配置尺寸的安全地基' };
     ctx.state.farm = { id: randomUUID(), ...site.farm, ...site.plan, waters: [...site.farm.waters, ...site.plan.waters],
@@ -323,6 +332,8 @@ export async function tendFarm(ctx, { emergency = false } = {}) {
           await digBlock(ctx, plant); await collectDrops(ctx, soil.offset(0, 1, 0), 4);
           if (CROPS.some((entry) => entry.block === ctx.bot.blockAt(soil.offset(0, 1, 0))?.name)) throw new Error('收割未确认');
           harvested++; farm.harvestSession.harvested++;
+          farm.harvestSession.byCrop ??= {};
+          farm.harvestSession.byCrop[existing.block] = (farm.harvestSession.byCrop[existing.block] ?? 0) + 1;
         }
         farm.harvestSession.targets = farm.harvestSession.targets.filter((id) => id !== key(soil));
         plot.crop = null;
@@ -342,7 +353,8 @@ export async function tendFarm(ctx, { emergency = false } = {}) {
         await sleep(250, ctx.signal);
         if (ctx.bot.blockAt(soil)?.name !== 'farmland') throw new Error('耕地操作未确认');
       }
-      const crop = CROPS.filter((entry) => countItem(ctx.bot, entry.seed) > 0).sort((a, b) =>
+      const targetCrop = CROPS.find(crop => crop.block === ctx.project?.options.crop);
+      const crop = (targetCrop ? [targetCrop] : CROPS).filter((entry) => countItem(ctx.bot, entry.seed) > 0).sort((a, b) =>
         farm.plots.filter((entry) => entry.crop === a.block).length - farm.plots.filter((entry) => entry.crop === b.block).length)[0];
       if (!crop) { errors.push('缺少补种材料'); continue; }
       await ctx.bot.equip(ctx.bot.inventory.items().find((item) => item.name === crop.seed), 'hand');
@@ -358,7 +370,13 @@ export async function tendFarm(ctx, { emergency = false } = {}) {
     }
   }
   if (farm.harvestSession && !farm.harvestSession.targets.length) {
-    if (farm.harvestSession.harvested > 0) farm.harvestCycles++;
+    if (farm.harvestSession.harvested > 0) {
+      farm.harvestCycles++;
+      farm.harvestsByCrop ??= {};
+      for (const [crop, count] of Object.entries(farm.harvestSession.byCrop || {})) {
+        farm.harvestsByCrop[crop] = (farm.harvestsByCrop[crop] ?? 0) + count;
+      }
+    }
     farm.lastHarvest = { ...farm.harvestSession, endedAt: gameClock(ctx.bot) }; farm.harvestSession = null;
   }
   farm.lastInspection = inspectFarm(ctx.bot, farm);

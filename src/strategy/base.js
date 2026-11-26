@@ -193,6 +193,7 @@ async function ensurePermanentBase(ctx, layout, { availableOnly = false } = {}) 
   const { bot, state } = ctx;
   ctx.stage?.({ title: '完善基地', steps: ['核对外壳', '安装设施', '核验仓储'], current: 0 });
   const settings = developmentSettings(bot, state);
+  if (ctx.project?.kind === 'house') settings.homeChests = ctx.project.options.chests;
   const projectId = state.house.projectId;
   if (state.base?.projectId !== projectId) state.base = { projectId, ready: false };
   const base = state.base;
@@ -337,7 +338,7 @@ async function ensurePermanentBase(ctx, layout, { availableOnly = false } = {}) 
     if (storage.dimension !== String(bot.game.dimension)) throw unsafeBase('仓储不在当前维度');
     storage.capacity = Math.max(storage.capacity || 0, settings.homeChests);
     const { width, depth } = layout.project.model.size;
-    const furnaces = Math.max(1, layout.project.model.furniture.furnaces);
+    const furnaces = ctx.project?.kind === 'house' ? ctx.project.options.furnaces : Math.max(1, layout.project.model.furniture.furnaces);
     // Inventory pass comes before ANY material acquisition, furnace first.
     const slots = [{ p: layout.origin.offset(width - 2, 1, 1), item: 'furnace' },
       { p: layout.origin.offset(1, 1, 1), item: 'crafting_table' }];

@@ -7,7 +7,7 @@ import { obtain, hasAtLeast } from '../autonomy/planner.js';
 import { MINING, MOB_DROPS } from '../autonomy/knowledge.js';
 import { nearestTreeWood, ensureCraftingTable } from '../autonomy/skills/craft.js';
 import { ensureFurnace } from '../autonomy/skills/smelt.js';
-import { buildHouse, buildShelter, finishHouse } from '../autonomy/skills/build.js';
+import { buildHouse, buildShelter, finishHouse, expandHouse } from '../autonomy/skills/build.js';
 import { mineUntil } from '../autonomy/skills/mine.js';
 import { ensureFarm, expandFarm, inspectFarm } from '../autonomy/skills/farming.js';
 import { farmSettings, gameClock, gameDay } from '../farming/settings.js';
@@ -22,7 +22,7 @@ import { wearArmor } from '../autonomy/milestones.js';
 import { leaveHome, reachHome, reachSurface } from './navigation.js';
 import { equipBestWeapon, isFightable } from '../actions/combat.js';
 import { assessSupplies, shouldPauseForSupplies } from '../supplies/assessment.js';
-import { chooseFood } from '../supplies/inventory.js';
+import { chooseFood, carriedFood } from '../supplies/inventory.js';
 import { descendToWater } from './recovery.js';
 import { tryLocalUnstuck } from './unstuck.js';
 import { ensureBase, archiveStorage, collectNearbyWool, sleepAtHome } from './base.js';
@@ -30,6 +30,9 @@ import { developmentStatus, developmentTask, IRON_EQUIPMENT } from './developmen
 import { refreshStorage } from '../farming/storage.js';
 import { stockBase, prepareIronTrip, migrateStoredItems } from './stockpile.js';
 import { eatIfNeeded, replenishFood, supplyState } from '../supplies/planner.js';
+
+import { survivalSkills } from './ai.js';
+import { projectsFor, refreshProject, recordProjectStep } from '../projects/engine.js';
 
 const { goals } = pathfinderPkg;
 const log = createLogger('strategy');
@@ -43,6 +46,52 @@ const GOAL_NAMES = { timber: '起步采木', wool: '附近收集羊毛', camp: '
   tools: '基础石器', workshop: '工作台与熔炉', shelter: '临时住所', house: '基础房屋', escape: '高处脱困', protection: '准备防具',
   farm: '农田巡检与维护', expandFarm: '渐进扩建农田', storage: '仓储整理', pasture: '牧场维护', night: '夜间避难', defend: '近身自卫', maintain: '基地巡检与等待' };
 const eat = eatIfNeeded;
+const ESSENTIAL_GOALS = new Set(['bootstrap', 'timber', 'finish_tree', 'tools', 'camp', 'base', 'reserves', 'food_stock', 'bind_home', 'shelter', 'recovery_kit']);
+const LOCAL_GOALS = new Set(['defend', 'eat', 'escape', 'night', 'recover', 'supply_wait']);
+
+function planningEvidence(bot, state) {
+  return {
+    inventory: Object.fromEntries([...new Set(bot.inventory.items().map(item => item.name))].sort()
+      .map(name => [name, countItem(bot, name)])),
+    home: state.home,
+    house: state.house,
+    base: state.base && { ready: state.base.ready, done: Object.values(state.base.jobs || {}).filter(job => job.status === 'done').length,
+      pending: Object.values(state.base.jobs || {}).filter(job => job.status !== 'done' && job.reason)
+        .slice(0, 5).map(({ label, reason }) => ({ label, reason })) },
+    storage: state.storage && { status: state.storage.status, chests: state.storage.chests.length,
+      verifiedItems: developmentStatus(bot, state).stored.items },
+    farm: state.farm && { status: state.farm.status, width: state.farm.width, depth: state.farm.depth,
+      harvests: state.farm.harvestCycles },
+    pastures: state.pastures.length,
+  };
+}
+
+function canChooseSkill(bot, state, skill, project) {
+  const preparingTrip = ['protection', 'iron_reserve'].includes(skill);
+  if (shouldPauseForSupplies(bot, state, skill, ESSENTIAL_GOALS.has(skill) || preparingTrip, developmentTask(skill, state))) return false;
+  if (state.failures[skill]?.retryAt > Date.now()) return false;
+  if (skill === 'finish_tree') return !!state.wholeTree;
+  if (skill === 'expandFarm') return !!state.farm;
+  if (skill === 'house_finish') return !!state.house?.finishingPending;
+  if (skill === 'house') return !!state.home && (!state.house || project?.kind === 'house' && project.options.mode === 'build');
+  if (skill === 'expand_house') return project?.kind === 'house' && !!state.house;
+  if (['base', 'protection', 'iron_reserve', 'food_stock', 'reserves'].includes(skill)) return !!state.house;
+  if (['camp', 'storage', 'farm', 'pasture'].includes(skill)) return !!state.home;
+  if (skill === 'shelter') return !state.home || state.home.status === 'building';
+  if (skill === 'recovery_kit') return !!state.home && !!state.development.recoveryPending;
+  return true;
+}
+
+function localPriority(goal, assessment) {
+  return LOCAL_GOALS.has(goal) || goal === 'food' && (assessment.level === 'emergency'
+    || assessment.interrupt && assessment.body.hunger < 12);
+}
+
+function recordModelStep(bot, planner, action, status, reason, evidence) {
+  const paused = planner.record({ action, status, reason, evidence });
+  bot.emit('agentIncident', { type: 'attempt', goal: action.skill, solution: action.plan,
+    reason, result: paused || status });
+}
 
 function shelteredUnderground(bot, state) {
   if (!state.home || bot.entity.position.y >= state.home.y - 8) return false;
@@ -158,8 +207,14 @@ function rememberHome(ctx) {
     data: { position: home, respawnConfirmed: home.respawnConfirmed === true }, source: { type: 'project_record' } }));
 }
 
-async function executeGoal(ctx, goal) {
+async function executeGoal(ctx, goal, action) {
   const { bot, state } = ctx;
+  if (goal === 'obtain_item') {
+    await ctx.obtain(action.item, action.count);
+    const carried = countItem(bot, action.item);
+    if (carried < action.count) throw new Error(`背包实测 ${action.item} ${carried}/${action.count}`);
+    return { verified: `背包实测 ${action.item} ×${carried}` };
+  }
   if (goal === 'escape') {
     if (!state.home) return descendToWater(ctx);
     try { await returnHome(ctx); }
@@ -356,18 +411,23 @@ async function executeGoal(ctx, goal) {
     rememberHome(ctx);
     return;
   }
+  if (goal === 'expand_house') {
+    return expandHouse(ctx, { projectId: state.house.projectId, direction: 'up' });
+  }
   if (goal === 'house') {
     await leaveHome(ctx, state.home);
     if (!state.activeHouseProjectId && state.surveyPosition
       && bot.entity.position.distanceTo(new Vec3(state.surveyPosition.x, state.surveyPosition.y, state.surveyPosition.z)) < 48) {
       await goNear(ctx, state.surveyPosition);
     }
-    const house = await buildHouse(ctx, { resultDetails: true, modelId: bot.autonomyHouseModel || 'starter', basicShell: true });
+    const house = await buildHouse(ctx, { resultDetails: true, modelId: ctx.project?.options.model || bot.autonomyHouseModel || 'starter',
+      basicShell: true, requestId: ctx.project?.id });
     archiveStorage(state);
     state.house = { projectId: house.projectId, finishingPending: house.finishingPending };
     state.home = { ...house.position, door: house.door, dimension: String(bot.game.dimension), kind: 'house', projectId: house.projectId };
     state.base = null;
     await ctx.checkpoint();
+    if (ctx.project) return house;
     await ensureBase(ctx, { permanent: true });
     await migrateStoredItems(ctx);
     rememberHome(ctx);
@@ -396,7 +456,7 @@ async function executeGoal(ctx, goal) {
   if (goal === 'farm' || goal === 'expandFarm') {
     if (state.storage && bot.inventory.emptySlotCount() < 3) await storeSurplus(ctx);
     await leaveHome(ctx, state.home);
-    if (goal === 'farm' && state.farm && ['building', 'needs_seeds'].includes(state.farm.status)
+    if (goal === 'farm' && !ctx.project && state.farm && ['building', 'needs_seeds'].includes(state.farm.status)
       && state.failures.farm?.farmId === state.farm.id && state.failures.farm?.attempts >= 3) {
       const report = inspectFarm(bot, state.farm);
       if (report.unknown === 0 && report.planted === 0) {
@@ -412,7 +472,9 @@ async function executeGoal(ctx, goal) {
     }
     const anchor = state.farm?.origin || state.home;
     await goNear(ctx, anchor);
-    const result = goal === 'expandFarm' ? await expandFarm(ctx, bot.farmRequest?.operation === 'expand' ? bot.farmRequest : {})
+    const expansion = ctx.project ? { width: Math.max(state.farm?.width || 0, ctx.project.options.width),
+      depth: Math.max(state.farm?.depth || 0, ctx.project.options.depth) } : bot.farmRequest?.operation === 'expand' ? bot.farmRequest : {};
+    const result = goal === 'expandFarm' ? await expandFarm(ctx, expansion)
       : await ensureFarm(ctx, { anchor });
     if (state.farm && result.report?.unknown === 0) {
       if (!isNight(bot)) state.farm.lastMorningInspectionDay = gameDay(bot);
@@ -420,6 +482,7 @@ async function executeGoal(ctx, goal) {
     }
     if (bot.farmRequest?.operation === (goal === 'expandFarm' ? 'expand' : 'tend') && !result.deferred) bot.farmRequest = null;
     await rememberFacilities(ctx);
+    if (ctx.project) return result;
     if (result.deferred) throw new Error(result.reason);
     if (countItem(bot, 'wheat') >= 6) await ctx.obtain('bread', countItem(bot, 'bread') + Math.floor((countItem(bot, 'wheat') - 3) / 3));
     if (hasSurplus(ctx)) await storeSurplus(ctx);
@@ -444,7 +507,7 @@ async function executeGoal(ctx, goal) {
   await sleep(10000, ctx.signal);
 }
 
-async function run(bot, { signal, setProgress, setStage }) {
+async function run(bot, { signal, setProgress, setStage }, planner) {
   let state = await loadStrategyState(bot);
   state.development ??= {};
   // Migrate the old whole-base backoff once. Its historical failure remains
@@ -462,6 +525,12 @@ async function run(bot, { signal, setProgress, setStage }) {
   const supervisor = { active: true, retreating: false, goal: null, pausedGoal: null, danger: null, state };
   bot.strategySupervisor = supervisor;
   let step = null;
+  supervisor.interruptProject = (id, reason) => {
+    if (supervisor.projectRuntime?.id === id && step && !step.signal.aborted) {
+      step.abort(reason);
+      haltBot(bot);
+    }
+  };
   let lastCheck = 0;
   const check = (force = false) => {
     if (!step || !bot.entity || !force && Date.now() - lastCheck < 200) return;
@@ -471,7 +540,9 @@ async function run(bot, { signal, setProgress, setStage }) {
     supervisor.danger = danger;
     const assessment = assessSupplies(bot, state, state.supplies?.activeTask || {});
     const preparingTrip = ['protection', 'iron_reserve'].includes(supervisor.goal) && !state.development.tripReady;
-    const needsFoodBreak = supervisor.goal !== 'night' && shouldPauseForSupplies(bot, state, supervisor.goal, supervisor.essentialStep || preparingTrip);
+    const needsFoodBreak = supervisor.goal === 'planning'
+      ? assessment.level === 'emergency' || assessment.needsMeal && assessment.mealAvailable
+      : supervisor.goal !== 'night' && shouldPauseForSupplies(bot, state, supervisor.goal, supervisor.essentialStep || preparingTrip);
     const needsDefense = danger.defend && supervisor.goal !== 'defend';
     const shelterDeadline = !state.home && (bot.time?.timeOfDay ?? 0) >= 10000
       && !['night', 'escape', 'eat'].includes(supervisor.goal);
@@ -511,6 +582,7 @@ async function run(bot, { signal, setProgress, setStage }) {
   };
   try {
     while (!signal.aborted) {
+      supervisor.projectRuntime = null;
       if (bot.memory?.suspended) throw new Error('世界身份已改变，自主生存已停止，等待重新连接');
       if (bot.health <= 0 || bot.isSleeping) { await sleep(1000, signal); continue; }
       if (String(bot.game.dimension) !== state.partition.dimension) {
@@ -559,6 +631,105 @@ async function run(bot, { signal, setProgress, setStage }) {
         goal = assessment.needsMeal && assessment.mealAvailable ? 'eat' : state.supplies.retryAt > Date.now() ? 'supply_wait' : 'food';
       }
       await wearArmor({ bot, log: () => {} }).catch((error) => log.warn(`穿戴防具失败：${error.message}`));
+      let modelAction;
+      let before;
+      let projectView;
+      let projectStep;
+      let store;
+      const finishProject = (view) => {
+        if (view.project.status === 'complete') bot.emit('projectNotice', view.project,
+          `「${view.project.objective}」已通过本地验收。 ${view.steps.map(step => step.detail).join('；')}`);
+      };
+      if (planner && !localPriority(goal, assessment) && ['overworld', 'minecraft:overworld'].includes(state.partition.dimension)) {
+        store = projectsFor(bot);
+        try {
+          const active = (await store.read()).active;
+          if (active) {
+            projectView = await refreshProject(store, bot, state, active);
+            finishProject(projectView);
+          }
+        } catch (error) {
+            supervisor.goal = 'planning_wait';
+            setProgress(`工程暂缓：${error.message}`);
+            await sleep(3000, signal);
+            continue;
+        }
+        if (projectView) {
+          if (projectView.project.status === 'complete') projectView = null;
+          else if (!projectView.ready.length) {
+            supervisor.goal = 'planning_wait';
+            const reason = projectView.steps.find(job => ['waiting', 'blocked'].includes(job.status))?.detail || projectView.report;
+            supervisor.projectRuntime = { id: projectView.project.id, status: 'waiting', reason };
+            setProgress(projectView.report + ' · ' + reason);
+            await sleep(3000, signal);
+            continue;
+          }
+        }
+      }
+      if (planner && !localPriority(goal, assessment) && ['overworld', 'minecraft:overworld'].includes(state.partition.dimension)) {
+        const project = projectView?.project;
+        const eligible = projectView ? [...new Set([...projectView.ready.map(step => step.skill), ...projectView.support])] : Object.keys(survivalSkills);
+        const available = eligible.filter(skill => canChooseSkill(bot, state, skill, project));
+        const position = bot.entity.position;
+        const rooms = state.buildingRooms?.[state.home?.projectId] || [];
+        const inRegisteredRoom = rooms.some(({ origin, size }) => position.x >= origin.x + 1
+          && position.x < origin.x + size.width - 1 && position.z >= origin.z + 1
+          && position.z < origin.z + size.depth - 1 && Math.floor(position.y) === origin.y + 1);
+        const gear = [5, 6, 7, 8, 45].map(slot => bot.inventory.slots[slot]?.name).filter(Boolean);
+        const evidence = planningEvidence(bot, state);
+        supervisor.goal = 'planning';
+        supervisor.essentialStep = false;
+        if (project) supervisor.projectRuntime = { id: project.id, status: 'planning' };
+        setProgress('AI 正在选择下一步');
+        step = new AbortController();
+        const planningSignal = AbortSignal.any([signal, step.signal]);
+        let decision;
+        try {
+          decision = await planner.decide({ available,
+            project: projectView && { id: project.id, objective: project.objective, options: project.options,
+              steps: projectView.steps, ready: projectView.ready.map(step => step.id), supportFailures: projectView.supportFailures },
+            world: state.partition.dimension, day: gameDay(bot), timeOfDay: bot.time?.timeOfDay,
+            position: { x: position.x, y: position.y, z: position.z },
+            homeProximity: state.home ? Math.round(position.distanceTo(new Vec3(state.home.x, state.home.y, state.home.z))) : null,
+            health: bot.health, hunger: bot.food, oxygen: danger.oxygen, gear, held: bot.heldItem?.name,
+            food: carriedFood(bot, state), threats: danger.threats.slice(0, 8).map(({ name, distance }) => ({ name, distance })),
+            inRegisteredRoom, outdoorWork: '当前时段可提议，执行时复核路线和安全限制',
+            localSuggestion: goal, evidence, lastLocalGoal: state.lastGoal,
+          }, planningSignal);
+        } catch (error) {
+          throwIfAborted(signal);
+          if (!step.signal.aborted) throw error;
+          continue;
+        } finally {
+          step = null;
+        }
+        // The world may have changed during the remote call. Reapply the
+        // safety and precondition checks before starting any proposed action.
+        if (bot.health <= 0 || bot.isSleeping || bot.memory?.suspended || String(bot.game.dimension) !== state.partition.dimension
+          || readDanger(bot).retreat) continue;
+        const current = (await store.read()).active;
+        if (current?.id !== project?.id || project && (current.status !== 'active' || current.updatedAt !== project.updatedAt)) continue;
+        const fresh = nextGoal(bot, state);
+        if (localPriority(fresh, assessSupplies(bot, state, developmentTask('house', state)))) {
+          if (decision.type === 'skill') recordModelStep(bot, planner, decision, 'deferred', `本地优先执行：${GOAL_NAMES[fresh]}`);
+          goal = fresh;
+        } else if (decision.type === 'skill' && canChooseSkill(bot, state, decision.skill, project)) {
+          modelAction = decision;
+          goal = decision.skill;
+          projectStep = projectView?.ready.find(candidate => candidate.skill === goal);
+        } else if (decision.type === 'fallback' && !project) {
+          goal = fresh;
+          if (decision.reason) log.warn(`AI 规划暂不可用，使用本地策略：${decision.reason}`);
+        } else {
+          if (project) supervisor.projectRuntime = { id: project.id, status: 'waiting', reason: decision.reason || decision.plan || '等待可执行方案' };
+          if (decision.type === 'skill') recordModelStep(bot, planner, decision, 'deferred', '现场条件变化，技能当前未通过本地审核');
+          supervisor.goal = 'planning_wait';
+          setProgress(decision.reason ? `AI 方案暂缓：${decision.reason}`
+            : projectView ? `${projectView.report} · 等待 AI 方案及条件复查` : 'AI 暂无可执行步骤，等待条件复查');
+          await sleep(3000, signal);
+          continue;
+        }
+      }
       const failure = state.failures[goal];
       if (failure && failure.retryAt > Date.now() && !['eat', 'food', 'recover', 'supply_wait'].includes(goal)) {
         if (['night', 'bootstrap', 'shelter', 'escape'].includes(goal)) {
@@ -566,26 +737,37 @@ async function run(bot, { signal, setProgress, setStage }) {
           await sleep(3000, signal);
           continue;
         }
-        if (assessment.level === 'insufficient') goal = 'supply_wait';
+        if (assessment.level === 'insufficient' && !modelAction) goal = 'supply_wait';
         else {
-          setProgress(`${GOAL_NAMES[goal]}：${failure.reason}；${Math.ceil((failure.retryAt - Date.now()) / 1000)}秒后重试`);
+          setProgress(`${GOAL_NAMES[goal] || survivalSkills[goal]}：${failure.reason}；${Math.ceil((failure.retryAt - Date.now()) / 1000)}秒后重试`);
           await sleep(Math.min(5000, failure.retryAt - Date.now()), signal);
           continue;
         }
       }
-      setStage?.(null);
+      const project = modelAction && projectView?.project;
+      supervisor.projectRuntime = project ? { id: project.id, status: 'executing', stepId: projectStep?.id,
+        skill: goal, skillLabel: survivalSkills[goal], plan: modelAction.plan } : null;
+      const updateStage = project && projectStep ? phase => {
+        if (phase) supervisor.projectRuntime.phase = phase;
+        setStage?.({ title: projectView.report, steps: projectView.steps.map(job => job.label),
+          current: projectView.steps.indexOf(projectStep) });
+      } : setStage;
+      if (project && projectStep) updateStage();
+      else setStage?.(null);
       supervisor.goal = goal;
       state.development.tripReady = false;
-      supervisor.essentialStep = ['bootstrap', 'timber', 'finish_tree', 'tools', 'camp', 'base', 'reserves', 'food_stock', 'bind_home', 'shelter', 'recovery_kit'].includes(goal);
+      supervisor.essentialStep = ESSENTIAL_GOALS.has(goal);
       supplyState(state).activeTask = developmentTask(goal, state);
       state.development.stage = developmentStatus(bot, state).stage;
       state.lastGoal = { goal, status: 'running', at: Date.now() };
-      setProgress(`自主生存：${GOAL_NAMES[goal]}`);
+      setProgress(modelAction ? `AI 方案：${modelAction.plan}` : `自主生存：${GOAL_NAMES[goal]}`);
       step = new AbortController();
       const stepSignal = AbortSignal.any([signal, step.signal]);
       const budget = setTimeout(() => step?.abort('单步时间预算耗尽，稍后继续'), 4 * 60 * 1000);
+      const goalLabel = GOAL_NAMES[goal] || survivalSkills[goal];
       const ctx = { bot, signal: stepSignal, state, depth: 0, checkpoint,
-        log(text) { setProgress(`${GOAL_NAMES[goal]}：${text}`); }, stage: setStage, materialNeeds: new Map() };
+        log(text) { setProgress(`${goalLabel}：${text}`); }, stage: updateStage, materialNeeds: new Map(),
+        project: projectStep && project };
       const reservedBefore = new Set(state.reservedItems);
       ctx.obtain = async (item, count) => {
         if ((isNight(bot) || (bot.time?.timeOfDay ?? 0) >= 10000) && countItem(bot, item) < count) {
@@ -631,9 +813,37 @@ async function run(bot, { signal, setProgress, setStage }) {
         await leaveHome(ctx, state.home);
         return result;
       };
+      async function saveProjectResult(failure, interrupted = false, supportProgress = false) {
+        if (!project) return;
+        const item = modelAction.skill === 'obtain_item' ? `:${modelAction.item}` : '';
+        const tracked = projectStep || { id: `support:${modelAction.skill}${item}`, label: survivalSkills[modelAction.skill] };
+        try {
+          const view = await refreshProject(store, bot, state, project, { observing: true });
+          const current = view.steps.find(job => job.id === tracked.id);
+          const advanced = current?.status === 'verified' || (current?.progress ?? 0) > (projectStep?.progress ?? 0)
+            || !projectStep && supportProgress;
+          const reason = failure || current?.detail || (supportProgress ? '支援技能取得可见进展' : '未观察到进展');
+          const saved = await recordProjectStep(store, project.id, tracked,
+            { status: interrupted || current?.status === 'waiting' ? 'deferred' : advanced ? 'progress' : 'failed', plan: modelAction.plan, reason });
+          if (projectStep) bot.emit('agentIncident', { type: 'attempt', goal: tracked.label, solution: modelAction.plan,
+            reason, result: interrupted ? '已暂缓' : advanced ? '有实际工程进展' : '未观察到工程进展' });
+          if (saved?.stepHistory[tracked.id].attempts === 2 && !interrupted) bot.emit('projectNotice', project,
+            `「${tracked.label}」两次未取得进展，已暂停该项。 ${saved.stepHistory[tracked.id].results.slice(-2)
+              .map(result => `${result.plan}：${result.reason}`).join('；')}`);
+          if (saved && view.complete) finishProject(await refreshProject(store, bot, state, saved));
+        } catch (error) {
+          log.warn(`工程进度暂未保存：${error.message}`);
+        }
+      }
       useMovementProfile(bot, 'free');
       try {
-        const result = await executeGoal(ctx, goal);
+        if (modelAction) {
+          check(true);
+          throwIfAborted(stepSignal);
+          before = structuredClone(planningEvidence(bot, state));
+          planner.announce(modelAction);
+        }
+        const result = await executeGoal(ctx, goal, modelAction);
         throwIfAborted(stepSignal);
         const previousFailure = state.failures[goal];
         delete state.failures[goal];
@@ -646,6 +856,17 @@ async function run(bot, { signal, setProgress, setStage }) {
           // checks responsive and let another ready job run on the next pass.
           await sleep(Math.min(5000, Math.max(1000, (result.retryAt || Date.now() + 1000) - Date.now())), stepSignal);
         }
+        let measuredProgress = false;
+        if (modelAction) {
+          const after = planningEvidence(bot, state);
+          const changed = Object.keys(after).filter(key => JSON.stringify(before[key]) !== JSON.stringify(after[key]));
+          const evidence = Object.fromEntries(changed.map(key => [key, after[key]]));
+          const verified = (result?.verified && changed.includes('inventory') ? result.verified : null) || (changed.length ? `实际状态变化：${changed.join('、')}` : null);
+          measuredProgress = Boolean(verified);
+          if (!projectStep) recordModelStep(bot, planner, modelAction, verified ? 'completed' : 'no_progress',
+            verified || state.lastGoal.reason || '执行结束，暂未观察到可验证进展', evidence);
+        }
+        await saveProjectResult(result?.reason, false, measuredProgress);
         if (previousFailure && !deferredBase) bot.emit('agentIncident', { type: 'resolved', goal, reason: previousFailure.reason,
           result: '原任务已完成并通过现有执行检查' });
         if (state.supplies.pausedGoal?.goal === goal) state.supplies.pausedGoal = null;
@@ -656,6 +877,10 @@ async function run(bot, { signal, setProgress, setStage }) {
         if (step.signal.aborted) {
           state.lastGoal.status = 'paused';
           state.lastGoal.reason = String(step.signal.reason);
+          await saveProjectResult(state.lastGoal.reason, state.lastGoal.reason !== '单步时间预算耗尽，稍后继续');
+          if (modelAction) recordModelStep(bot, planner, modelAction,
+            state.lastGoal.reason === '单步时间预算耗尽，稍后继续' ? 'failed' : 'deferred',
+            state.lastGoal.reason, planningEvidence(bot, state));
         } else {
           const previousFailure = state.failures[goal];
           const sameProject = goal !== 'farm' || previousFailure?.farmId === state.farm?.id;
@@ -667,6 +892,8 @@ async function run(bot, { signal, setProgress, setStage }) {
             ...(goal === 'farm' ? { farmId: state.farm?.id } : {}) };
           state.lastGoal.status = 'deferred';
           ctx.log(`暂缓：${err.message}`);
+          if (modelAction && !projectStep) recordModelStep(bot, planner, modelAction, 'failed', err.message, planningEvidence(bot, state));
+          await saveProjectResult(err.message);
           if (previousFailure?.reason !== err.message || !stayed) bot.emit('agentIncident',
             { type: 'failure', goal, reason: err.message, attempts });
 
@@ -679,7 +906,7 @@ async function run(bot, { signal, setProgress, setStage }) {
             }
           }
           const explorationSupplies = assessSupplies(bot, state);
-          if (['farm', 'pasture', 'shelter', 'house', 'base'].includes(goal) && attempts % 2 === 0 && !isNight(bot)
+          if (!projectStep && ['farm', 'pasture', 'shelter', 'house', 'base'].includes(goal) && attempts % 2 === 0 && !isNight(bot)
             && bot.food >= 12 && explorationSupplies.food.regular >= explorationSupplies.budget.foodMinimum) {
             try {
               await leaveHome(ctx, state.home);
@@ -705,6 +932,7 @@ async function run(bot, { signal, setProgress, setStage }) {
       } finally {
         clearTimeout(budget);
         step = null;
+        supervisor.projectRuntime = null;
         state.reservedItems = reservedBefore;
         if (!signal.aborted && !bot.isSleeping) haltBot(bot);
         await checkpoint();
@@ -728,13 +956,13 @@ async function run(bot, { signal, setProgress, setStage }) {
   }
 }
 
-export function startSurvival({ bot, tasks, owner = null, isWhisper = false }) {
-  if (tasks.current?.kind === 'autonomy' && bot.strategySupervisor?.active) return '自主生存已经在运行';
+export function startSurvival({ bot, tasks, owner = null, isWhisper = false, planner }) {
   tasks.start({ label: '自主生存', kind: 'autonomy', owner, isWhisper, report: 'failure' }, (task) => {
     const previous = pending.get(bot) || Promise.resolve();
-    const work = previous.catch(() => {}).then(() => { throwIfAborted(task.signal); return run(bot, task); });
+    const work = previous.catch(() => {}).then(() => { throwIfAborted(task.signal); return run(bot, task, planner); });
     pending.set(bot, work);
     return work;
   });
+  if (planner) return '开始 AI 规划生存：本地审核并执行模型选择的技能';
   return '开始自主生存：采木与临时住所 → 箱子和床 → 正式基地与备用物资 → 农业和存粮 → 铁器与备用铁';
 }

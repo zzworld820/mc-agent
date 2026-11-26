@@ -73,6 +73,8 @@ export const config = {
     allowDig: readBoolean('NPC_ALLOW_DIG', true),
     // 允许打敌对怪物（永远不打玩家和动物）
     allowCombat: readBoolean('NPC_ALLOW_COMBAT', true),
+    // 普通入口优先使用游戏和网页的共同指令队列，无指令时待命。
+    manualControl: readBoolean('NPC_MANUAL_CONTROL', true),
     // auto 默认进服自主生存；on 手动启动；off 关闭。保留显式配置的选择。
     autonomy: readString('NPC_AUTONOMY', 'auto'),
     autonomyMode: readString('AUTONOMY_MODE', 'survival'),

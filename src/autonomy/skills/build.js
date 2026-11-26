@@ -139,10 +139,11 @@ function canWorkOnProject(ctx, project) {
 }
 
 /** 按注册模型施工；未完工项目使用自己的模型快照恢复。 */
-export async function buildHouse(ctx, { style = 'starter', modelId = style, resultDetails = false, basicShell = false } = {}) {
+export async function buildHouse(ctx, { style = 'starter', modelId = style, resultDetails = false, basicShell = false, requestId } = {}) {
   const projects = (await listHouseProjects(ctx.bot)).filter(project => canWorkOnProject(ctx, project));
-  let project = projects.find((entry) => entry.id === ctx.state.activeHouseProjectId && entry.model.id === modelId)
-    ?? nearestProject(ctx.bot, projects.filter((entry) => entry.model.id === modelId && entry.status === 'building'));
+  let project = requestId ? projects.find(entry => entry.constructionRequestId === requestId)
+    : projects.find((entry) => entry.id === ctx.state.activeHouseProjectId && entry.model.id === modelId && !entry.constructionRequestId)
+      ?? nearestProject(ctx.bot, projects.filter((entry) => entry.model.id === modelId && entry.status === 'building' && !entry.constructionRequestId));
   const activeModel = project?.model ?? await getHouseModel(modelId);
   const plan = activeModel.size;
   if (project && toPosition(project.origin).distanceTo(ctx.bot.entity.position) > 24) {
@@ -155,6 +156,7 @@ export async function buildHouse(ctx, { style = 'starter', modelId = style, resu
   if (!site) throw new Error(`附近没有连续 ${plan.width}x${plan.depth}、落地且安全的空地，无法安全开工`);
   if (!isSafeHouseSite(ctx.bot, site.origin, plan, activeModel)) throw new Error('原工程地基或周边环境已改变，停止施工');
   project ??= createHouseProject(ctx.bot, activeModel, site.origin);
+  if (requestId) project.constructionRequestId = requestId;
   if (basicShell && activeModel.id === 'starter' && !project.construction) {
     const palette = {};
     const target = planHouseShell(activeModel, plan);

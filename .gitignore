@@ -12,3 +12,6 @@ local-server/
 
 # Local per-agent connection profiles
 agents.local.json
+
+# Local AI project checkpoints
+data/projects/

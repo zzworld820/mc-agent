@@ -310,3 +310,37 @@ input::placeholder, textarea::placeholder { color: #a0abba; }
 .incident-row { border: 1px solid #dce5ef; padding: .55rem .7rem; border-radius: .45rem; }
 .incident-row time { display: block; font-size: .78rem; }
 .incident-row p { margin: .16rem 0; overflow-wrap: anywhere; }
+
+.project-heading { display: flex; justify-content: space-between; gap: .75rem; align-items: flex-start; }
+.project-heading .tag { flex-shrink: 0; }
+.project-heading h3, .project-heading strong, .project-step p, .project-execution p, .project-past summary { overflow-wrap: anywhere; }
+.project-meter { margin-top: .65rem; }
+.project-execution { margin-top: .85rem; padding: .65rem .8rem; background: var(--blue-light); border-radius: .55rem; }
+.project-steps { padding: 0; margin: .8rem 0; display: grid; gap: .5rem; list-style: none; }
+.project-step { border: 1px solid var(--line); border-radius: .55rem; padding: .6rem .75rem; }
+.project-step.is-current { border-color: #9ab2f2; box-shadow: inset 3px 0 var(--blue); }
+.project-step p, .project-execution p { margin-top: .22rem; font-size: .85rem; }
+.project-result { color: var(--amber); }
+.project-actions { flex-wrap: wrap; }
+.project-past { padding: .5rem .6rem; border: 1px solid var(--line); border-radius: .55rem; }
+.project-past summary { cursor: pointer; }
+.project-form, .project-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .65rem; }
+.project-form { margin-top: .6rem; align-items: end; }
+.project-fields { grid-column: 1 / -1; padding: 0; margin: 0; border: 0; min-width: 0; }
+.project-fields[hidden] { display: none; }
+.project-form label { display: grid; gap: .2rem; font-size: .86rem; }
+.project-form .project-checkbox { display: flex; align-items: center; gap: .5rem; }
+.project-form .project-full { grid-column: 1 / -1; }
+.project-form input:not([type="checkbox"]), .project-form select, .project-form textarea {
+  width: 100%;
+  min-height: 2.2rem;
+  padding: .25rem .5rem;
+  background: #fff;
+  border: 1px solid #dce5ef;
+  border-radius: .4rem;
+  color: var(--ink);
+  font: inherit;
+}
+.project-form button { justify-self: end; }
+
+#chat-mode-buttons[hidden], #priorities-form[hidden] { display: none; }
